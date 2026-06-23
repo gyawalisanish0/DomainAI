@@ -8,10 +8,14 @@ name: Firebase Test Lab (device matrix)
 # different chipsets / GPUs / Android versions. Real on-device *inference* still
 # needs a human tester (model files are too large to fetch inside a Robo run).
 #
-# Manual-only on purpose: Test Lab's free Spark quota is a handful of runs/day,
-# so we don't burn it on every push.
+# Manual-only on purpose: Test Lab via the CLI bills per device-minute on the
+# Blaze plan, so we don't burn it on every push.
 #
 # ── One-time setup (all doable from a phone browser) ─────────────────────────
+#  0. The project must be on the **Blaze (pay-as-you-go) plan**. Test Lab via the
+#     CLI/CI uploads the APK to Cloud Storage, which requires billing — on the free
+#     Spark plan every run fails at upload with a 403 "billing account ... absent",
+#     even when IAM is correct.
 #  1. In the Firebase / Google Cloud console, open your existing project.
 #  2. Enable these APIs: "Cloud Testing API" and "Cloud Tool Results API".
 #  3. Create a service account → grant role "Firebase Test Lab Admin"
