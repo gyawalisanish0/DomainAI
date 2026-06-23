@@ -140,9 +140,40 @@ jobs:
             DEVICE_FLAGS+=(--device "$d")
           done
 
+          # Test Lab's auto-created default results bucket (test-lab-*) is not owned
+          # by this project, so a project-level Storage grant on our service account
+          # can't reach it and uploads 403 with "storage.objects.create denied".
+          # Write results to a bucket we own instead — the SA's project Storage Admin
+          # can write there. Prefer an existing project bucket (e.g. the Firebase
+          # default), else create a dedicated one (needs billing); else fall back.
+          echo "Service account project roles:"
+          gcloud projects get-iam-policy "$FIREBASE_PROJECT_ID" \
+            --flatten="bindings[].members" \
+            --filter="bindings.members:serviceAccount:firebase-test-lab-admin@${FIREBASE_PROJECT_ID}.iam.gserviceaccount.com" \
+            --format="table(bindings.role)" || true
+
+          RESULTS_BUCKET="$(gcloud storage buckets list --project="$FIREBASE_PROJECT_ID" \
+            --format='value(name)' 2>/dev/null | grep -v '^test-lab-' | head -n1 || true)"
+          if [ -z "$RESULTS_BUCKET" ]; then
+            CAND="${FIREBASE_PROJECT_ID}-testlab-results"
+            if gcloud storage buckets create "gs://$CAND" --project="$FIREBASE_PROJECT_ID" \
+                 --location=US --uniform-bucket-level-access; then
+              RESULTS_BUCKET="$CAND"
+            else
+              echo "::warning::No project bucket available and creation failed (billing?). Using the default bucket."
+            fi
+          fi
+
+          RESULTS_FLAGS=()
+          if [ -n "$RESULTS_BUCKET" ]; then
+            echo "Using results bucket: gs://$RESULTS_BUCKET"
+            RESULTS_FLAGS=(--results-bucket "$RESULTS_BUCKET")
+          fi
+
           gcloud firebase test android run \
             --type robo \
             --app "$APK" \
             --timeout "${{ inputs.timeout }}" \
             --project "$FIREBASE_PROJECT_ID" \
+            "${RESULTS_FLAGS[@]}" \
             "${DEVICE_FLAGS[@]}"
