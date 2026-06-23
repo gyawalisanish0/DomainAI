@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Single source of truth for spacing and sizing. A semantic spacing scale keeps
+  layouts consistent and lets the whole app be re-spaced (e.g. for tablets) by
+  editing one file. Kotlin never hardcodes a dp value.
+-->
+<resources>
+    <!-- Spacing scale -->
+    <dimen name="space_xxs">2dp</dimen>
+    <dimen name="space_xs">4dp</dimen>
+    <dimen name="space_s">8dp</dimen>
+    <dimen name="space_m">12dp</dimen>
+    <dimen name="space_l">16dp</dimen>
+    <dimen name="space_xl">32dp</dimen>
+
+    <!-- Message bubbles -->
+    <dimen name="bubble_corner">16dp</dimen>
+    <dimen name="bubble_corner_tail">4dp</dimen>
+    <dimen name="bubble_max_width">320dp</dimen>
+    <dimen name="bubble_pad_h">14dp</dimen>
+    <dimen name="bubble_pad_v">10dp</dimen>
+
+    <!-- Pills / badges -->
+    <dimen name="pill_pad_h">8dp</dimen>
+    <dimen name="pill_pad_v">3dp</dimen>
+
+    <!-- Icon sizing -->
+    <dimen name="icon_badge">13dp</dimen>
+    <dimen name="icon_small">16dp</dimen>
+    <dimen name="icon_progress">22dp</dimen>
+    <dimen name="stroke_thin">2dp</dimen>
+    <dimen name="dot_size">8dp</dimen>
+</resources>

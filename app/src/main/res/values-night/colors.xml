@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  DARK palette. Selected automatically when the phone reports dark mode. Same
+  resource names as values/colors.xml so Kotlin never needs to know which is
+  active.
+-->
+<resources>
+    <color name="brand_local">#2E9E76</color>
+    <color name="brand_cloud">#E0922B</color>
+    <color name="brand_blocked">#F2B8B5</color>
+
+    <color name="primary">#2E9E76</color>
+    <color name="on_primary">#00210F</color>
+    <color name="secondary">#E0922B</color>
+    <color name="on_secondary">#3A2A00</color>
+    <color name="background">#101412</color>
+    <color name="on_background">#E2E3DE</color>
+    <color name="surface">#161B18</color>
+    <color name="on_surface">#E2E3DE</color>
+    <color name="surface_variant">#1F2622</color>
+    <color name="on_surface_variant">#C2C9BF</color>
+    <color name="outline">#8C9388</color>
+    <color name="error">#F2B8B5</color>
+    <color name="on_error">#601410</color>
+</resources>

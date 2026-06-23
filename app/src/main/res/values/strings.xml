@@ -1,0 +1,183 @@
+<resources>
+    <string name="app_name">Domain AI</string>
+    <string name="tagline">Local-first AI. Your words stay on your device.</string>
+
+    <!-- Chat screen -->
+    <string name="chat_title">Domain AI</string>
+    <string name="chat_subtitle">Local-first AI</string>
+    <string name="action_new_chat">New chat</string>
+    <string name="action_history">Chat history</string>
+    <string name="history_title">Chats</string>
+    <string name="history_untitled">Untitled chat</string>
+    <string name="history_rename">Rename</string>
+    <string name="history_rename_save">Save</string>
+    <string name="history_delete">Delete</string>
+    <string name="history_delete_confirm">Delete \"%1$s\"? This can\'t be undone.</string>
+    <string name="action_settings">Settings</string>
+    <string name="action_send">Send</string>
+    <string name="action_stop">Stop</string>
+    <string name="action_copy">Copy</string>
+    <string name="action_back">Back</string>
+    <string name="empty_title">Ask Domain AI anything</string>
+    <string name="empty_body">Every reply is generated on your device. Nothing leaves the phone unless you turn on cloud mode and approve what gets sent.</string>
+    <string name="input_hint_local">Message Domain AI…</string>
+    <string name="input_hint_cloud">Message (will use cloud)…</string>
+    <string name="cd_cloud_on">Cloud on for this message</string>
+    <string name="cd_local_only">Local only</string>
+
+    <!-- Routing badges -->
+    <string name="badge_local">On-device</string>
+    <string name="badge_cloud">Cloud</string>
+    <string name="badge_blocked">Blocked</string>
+    <string name="sent_redacted">Sent (redacted): “%1$s”</string>
+
+    <!-- Privacy banner -->
+    <string name="banner_killswitch">Kill switch ON · fully offline</string>
+    <string name="banner_cloud_allowed">Cloud allowed · local by default</string>
+    <string name="banner_local_only">Local only · cloud not consented</string>
+
+    <!-- Cloud review dialog -->
+    <string name="dialog_cloud_title">Review before sending to cloud</string>
+    <string name="dialog_cloud_intro">This message will leave your device. Here is exactly what the cloud provider will receive:</string>
+    <string name="dialog_redacted_count">Redacted %1$d item(s): %2$s</string>
+    <string name="dialog_no_pii">No personal information was detected to redact.</string>
+    <string name="dialog_send_cloud">Send to cloud</string>
+    <string name="dialog_keep_local">Keep on-device</string>
+
+    <!-- Settings screen -->
+    <string name="settings_title">Privacy &amp; Settings</string>
+    <string name="settings_section_privacy">Privacy</string>
+    <string name="settings_section_cloud">Cloud</string>
+    <string name="advanced_endpoint_title">Advanced: custom endpoint</string>
+    <string name="advanced_endpoint_summary">Point Domain AI at any OpenAI-compatible /chat/completions API — OpenAI, a local proxy, a gateway, or a paid OpenRouter model.</string>
+    <string name="setting_killswitch_title">Network kill switch</string>
+    <string name="setting_killswitch_summary">When on, Domain AI physically cannot make any network request. Fully offline.</string>
+    <string name="setting_consent_title">Allow cloud mode</string>
+    <string name="setting_consent_summary">Explicit consent to ever use the cloud. Required before any message can leave the device.</string>
+    <string name="setting_redact_title">Redact before sending</string>
+    <string name="setting_redact_summary">Strip emails, phone numbers and other identifiers from anything sent to the cloud.</string>
+    <string name="setting_datalog_title">Allow data-logging models</string>
+    <string name="setting_datalog_summary">Some free cloud models (e.g. OpenRouter free tier) may log or train on your prompts. Required — on top of cloud consent — before any such model is used.</string>
+    <string name="setting_crash_title">Send crash reports</string>
+    <string name="setting_crash_summary">Opt in to share crash and error reports (Firebase Crashlytics) so bugs can be fixed. Off by default. Only crashes/errors are sent — no usage analytics or tracking.</string>
+    <string name="setting_base_url">Base URL (OpenAI-compatible)</string>
+    <string name="setting_api_key">API key</string>
+    <string name="setting_model">Model</string>
+    <string name="setting_save_provider">Save provider</string>
+    <string name="setting_clear_provider">Clear</string>
+    <string name="setting_provider_saved">Provider saved (stored encrypted on-device).</string>
+    <string name="setting_provider_cleared">Provider cleared.</string>
+    <string name="settings_footer">Domain AI collects no analytics and contains no trackers. Conversations are encrypted on-device with a hardware-backed key.</string>
+
+    <!-- First-launch acceptance (Terms of Service + Privacy Policy) -->
+    <string name="accept_title">Welcome to Domain AI</string>
+    <string name="accept_intro">Domain AI is a local-first AI assistant. Answers are generated on your device by default and your conversations are stored encrypted on the phone. Please review and accept the terms below to continue.</string>
+    <string name="accept_tos_heading">Terms of Service</string>
+    <string name="accept_tos_body">By using Domain AI you agree to use it lawfully and at your own risk. Domain AI is provided “as is”, without warranties of any kind. AI output may be inaccurate or incomplete — do not rely on it for medical, legal, financial, or other professional decisions. You are responsible for the content you enter and for any model you download or import. To the maximum extent permitted by law, the developers are not liable for any damages arising from your use of the app. These terms may change with future updates; continued use after an update means you accept the updated terms.</string>
+    <string name="accept_privacy_heading">Privacy Policy</string>
+    <string name="accept_privacy_body">Local by default: your messages are processed on-device and never leave the phone unless you pick a cloud model. Domain AI contains no analytics and no trackers. Conversations and credentials are encrypted on-device with a hardware-backed key.\n\nCloud features (optional): if you choose a cloud model, your message — automatically redacted to strip detected emails, phone numbers, and similar identifiers — is sent to the provider you selected, solely to generate a reply. Some free cloud models may log or train on prompts; these require a separate, explicit permission. The exact redacted text sent is shown beneath each cloud reply.\n\nCrash reporting (optional, off by default): you may opt in to share crash and error reports (Firebase Crashlytics) to help fix bugs; only crash/error data is sent — never your conversations.\n\nYour controls: a network kill switch can block all network access, and every cloud and crash-reporting permission can be revoked anytime in Settings. Model files you download or import stay in app-private storage and are excluded from device backups.</string>
+    <string name="accept_consent_note">Accepting enables optional cloud features (cloud model use and free data-logging models). You stay fully on-device until you pick a cloud model, and you can disable these anytime in Settings.</string>
+    <string name="accept_action_accept">Accept &amp; continue</string>
+    <string name="accept_action_decline">Decline &amp; exit</string>
+
+    <!-- Model picker (chat screen) -->
+    <string name="cd_model_picker">Choose model</string>
+    <string name="model_picker_title">Choose model</string>
+    <string name="model_picker_local">On-device</string>
+    <string name="model_picker_cloud">Cloud</string>
+    <string name="model_picker_offline">Offline responder</string>
+    <string name="model_picker_no_local">No on-device model yet. Download or import one in Settings.</string>
+    <string name="model_picker_no_cloud">No cloud model set. Add one in Settings.</string>
+    <string name="model_label_cloud">%1$s · Cloud</string>
+    <string name="chip_offline">Offline</string>
+
+    <!-- Installed models list -->
+    <string name="model_installed_title">On your device</string>
+    <string name="model_available_title">Available to download</string>
+    <string name="model_source_download">Downloaded</string>
+    <string name="model_source_import">Imported</string>
+    <string name="model_in_use">In use</string>
+    <string name="model_use">Use</string>
+    <string name="model_none_installed">No models yet. Download one below or import a .gguf.</string>
+
+    <!-- Diagnostics (debug builds only) -->
+    <string name="settings_section_diagnostics">Diagnostics</string>
+    <string name="diagnostics_summary">Capture this app\'s logs (including the on-device model loader) and share them as a text file. Debug builds only.</string>
+    <string name="action_share_diagnostics">Share app logs</string>
+
+    <!-- GPU offload + speed benchmark -->
+    <string name="setting_gpu_title">GPU acceleration</string>
+    <string name="setting_gpu_summary">Offload model layers to the GPU (Vulkan/OpenCL) when supported. If the GPU can\'t run it, the model loads on the CPU automatically — it never crashes. Most phone GPUs aren\'t faster than the CPU for this, so use Benchmark to check. Changing this reloads the model.</string>
+    <string name="action_benchmark">Benchmark speed</string>
+    <string name="benchmark_running">Benchmarking…</string>
+    <string name="benchmark_result">%1$s tok/s · prefill %2$d ms · %3$d tokens (%4$s)</string>
+
+    <!-- Context length (user-configurable) -->
+    <string name="setting_context_title">Context length</string>
+    <string name="setting_context_summary">How much of the conversation the model keeps in mind. Larger uses more memory; capped to your device and the model. Changing it reloads the model.</string>
+    <string name="context_auto_label">Auto (%1$d)</string>
+    <string name="context_tokens_label">%1$d tokens</string>
+    <string name="cd_context_menu">Choose context length</string>
+
+    <!-- Chat inference quick-panel (bottom-left of the input bar) -->
+    <string name="cd_inference_panel">Model &amp; inference settings</string>
+    <string name="inference_panel_title">Model &amp; inference</string>
+    <string name="inference_panel_model">Model</string>
+    <string name="inference_panel_performance">Performance</string>
+
+    <!-- On-device model section -->
+    <string name="settings_section_model">On-device model</string>
+    <string name="model_device_ram">Device RAM: %1$d MB</string>
+    <string name="model_state_none">No model loaded — answering with the offline responder.</string>
+    <string name="model_state_loading">Loading %1$s…</string>
+    <string name="model_state_ready">Active: %1$s</string>
+    <string name="model_state_error">Model error: %1$s</string>
+    <string name="model_downloading">Downloading… %1$d%%</string>
+    <string name="model_download_detail">Downloading %1$s — %2$d%% (%3$s / %4$s)</string>
+    <string name="model_initializing">Initializing model…</string>
+    <string name="model_retry">Retry</string>
+    <string name="model_ready_check">✓ Ready</string>
+    <string name="model_download">Download</string>
+    <string name="model_import">Import .gguf</string>
+    <string name="model_unload">Unload</string>
+    <string name="suitability_recommended">Recommended</string>
+    <string name="suitability_heavy">Heavy for this device</string>
+    <string name="suitability_insufficient">Not enough RAM</string>
+    <string name="model_download_confirm_title">Download model?</string>
+    <string name="model_download_confirm_body">This downloads %1$s (~%2$s) from %3$s. One-time network request — no chat content is sent. Use Import instead to stay fully offline.</string>
+    <string name="model_download_confirm_ok">Download</string>
+    <string name="model_download_confirm_cancel">Cancel</string>
+
+    <!-- Chat model-loading banner -->
+    <string name="chat_model_loading">Loading on-device model…</string>
+
+    <!-- Reasoning (chain-of-thought) section for reasoning models -->
+    <string name="reasoning_label">Reasoning</string>
+    <string name="reasoning_thinking">Thinking…</string>
+    <string name="cd_typing">Generating a reply</string>
+
+    <!-- Active cloud provider / validation -->
+    <string name="provider_active">Connected · %1$s</string>
+    <string name="provider_delete">Delete API key</string>
+    <string name="provider_validating">Validating connection…</string>
+    <string name="provider_invalid">Couldn\'t validate: %1$s</string>
+    <string name="provider_locked_hint">To switch provider or model, delete the current API key first.</string>
+
+    <!-- Download progress notification -->
+    <string name="notif_channel_name">Model downloads</string>
+    <string name="notif_downloading">Downloading %1$s</string>
+    <string name="notif_complete">%1$s is ready</string>
+    <string name="notif_failed">Model download failed</string>
+
+    <!-- OpenRouter free models -->
+    <string name="settings_section_openrouter">OpenRouter free models</string>
+    <string name="openrouter_hint">Free models need a free OpenRouter API key. They may log your prompts — enable \"Allow data-logging models\" above to use them.</string>
+    <string name="openrouter_key_label">OpenRouter API key</string>
+    <string name="openrouter_fetch">Fetch free models</string>
+    <string name="openrouter_loading">Fetching free models…</string>
+    <string name="openrouter_empty">No models loaded yet — tap \"Fetch free models\".</string>
+    <string name="openrouter_use">Use</string>
+    <string name="openrouter_logs_tag">logs data</string>
+    <string name="openrouter_ctx">%1$dk ctx</string>
+    <string name="openrouter_active">Active cloud model: %1$s</string>
+</resources>

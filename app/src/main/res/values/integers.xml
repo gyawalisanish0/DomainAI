@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Non-dimension numeric constants. Alphas are expressed as integer percentages
+  (divided by 100 at the call site) because Compose has no float-resource reader
+  that is safe below API 29.
+-->
+<resources>
+    <!-- Container tint strength for pills/banners, as a percentage. -->
+    <integer name="alpha_container_pct">12</integer>
+    <integer name="alpha_container_soft_pct">10</integer>
+
+    <!-- Fully-rounded corner, expressed as a percentage of the shorter side. -->
+    <integer name="pill_corner_percent">50</integer>
+
+    <!-- Max lines the chat input may grow to before scrolling. -->
+    <integer name="input_max_lines">4</integer>
+</resources>

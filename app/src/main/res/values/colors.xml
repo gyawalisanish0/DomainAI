@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  LIGHT palette. The matching dark palette lives in values-night/colors.xml and
+  is selected automatically by the system when the phone is in dark mode. No
+  Kotlin code decides the theme — the resource framework does.
+
+  Semantic brand colors encode Domain AI's privacy states:
+    brand_local   → answered on-device / safe / offline
+    brand_cloud   → data left the device (opt-in)
+    brand_blocked → a request the privacy layer refused
+-->
+<resources>
+    <color name="brand_local">#0B6E4F</color>
+    <color name="brand_cloud">#B26A00</color>
+    <color name="brand_blocked">#B3261E</color>
+
+    <!-- Material3 color-scheme slots -->
+    <color name="primary">#0B6E4F</color>
+    <color name="on_primary">#FFFFFF</color>
+    <color name="secondary">#B26A00</color>
+    <color name="on_secondary">#FFFFFF</color>
+    <color name="background">#F6F8F7</color>
+    <color name="on_background">#101412</color>
+    <color name="surface">#FFFFFF</color>
+    <color name="on_surface">#101412</color>
+    <color name="surface_variant">#E6EDE9</color>
+    <color name="on_surface_variant">#42493F</color>
+    <color name="outline">#72796F</color>
+    <color name="error">#B3261E</color>
+    <color name="on_error">#FFFFFF</color>
+</resources>
