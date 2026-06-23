@@ -83,10 +83,6 @@ class LLamaAndroid private constructor() {
         }.apply { isDaemon = true }
     }.asCoroutineDispatcher()
 
-    // Upper bound on tokens generated per reply; the actual cap is min(this,
-    // n_ctx/4) computed against the live context size.
-    private val maxNewTokens: Int = 512
-
     // --- Native bridge (implemented in cpp/llama-android.cpp) ---
     private external fun log_to_android()
     private external fun last_error(): String
@@ -192,8 +188,10 @@ class LLamaAndroid private constructor() {
         val prefillStart = System.nanoTime()
         val start = completion_init(state.context, state.batch, prompt, nCtx)
         lastPrefillMs = (System.nanoTime() - prefillStart) / 1_000_000
-        val budget = minOf(maxNewTokens, nCtx / 4)
-        val stop = minOf(start + budget, nCtx - 1)
+        // Generate until the model emits end-of-turn (EOS) or the reply fills the
+        // remaining context. Reply length is therefore governed by the context-window
+        // setting (minus the prompt) — there is no fixed output-token cap.
+        val stop = nCtx - 1
         val ncur = IntVar(start)
         var tokens = 0
         val genStart = System.nanoTime()

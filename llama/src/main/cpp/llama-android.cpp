@@ -281,9 +281,10 @@ Java_sg_act_domain_llama_LLamaAndroid_completion_1init(
     // Safety net: if the prompt still won't fit the context (the Kotlin side trims
     // semantically, this guards against any overflow), keep the most recent tokens
     // and reserve room for the reply. This is the difference between a clamped
-    // prompt and a native crash.
+    // prompt and a native crash. The reserved reply room scales with the context
+    // size (no fixed cap), so a larger context window allows a longer reply.
     const int n_ctx = llama_n_ctx(ctx);
-    const int max_new = std::min(512, n_ctx / 4);
+    const int max_new = n_ctx / 4;
     const int max_prompt = std::max(1, n_ctx - max_new);
     int n_tokens = static_cast<int>(tokens.size());
     if (n_tokens > max_prompt) {
