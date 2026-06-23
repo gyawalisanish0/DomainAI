@@ -1,7 +1,11 @@
 name: Release
 
-# Builds a signed release APK. Trigger it manually from the Actions tab
-# (Run workflow), or by pushing a version tag, e.g. `git tag v1.01 && git push --tags`.
+# Builds a SIGNED release APK and publishes it as a draft GitHub Release.
+#
+# Phone-friendly: just tap Actions → "Release" → "Run workflow" (on main). It reads
+# the app's versionName, builds the signed APK, and creates a *draft* Release with
+# the APK attached — review it, then tap Publish. No tags or terminal needed.
+# (Pushing a v* tag does the same thing.)
 on:
   workflow_dispatch:
   push:
@@ -12,7 +16,7 @@ jobs:
     name: Signed release build
     runs-on: ubuntu-latest
     permissions:
-      contents: write   # create the GitHub Release on tag pushes
+      contents: write   # create the draft GitHub Release (and tag, on publish)
     steps:
       - uses: actions/checkout@v4
 
@@ -96,11 +100,38 @@ jobs:
           path: app/build/outputs/apk/release/*.apk
           if-no-files-found: error
 
-      - name: Publish GitHub Release
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Resolve release tag and notes
+        id: rel
+        run: |
+          # On a tag push, use the tag. On a manual run, derive v<versionName> from
+          # the app so no tag needs to be created by hand.
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            TAG="${{ github.ref_name }}"
+          else
+            VN=$(grep -E 'versionName[[:space:]]*=' app/build.gradle.kts | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
+            TAG="v${VN}"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          # Use a matching hand-written notes file if present; else auto-generate.
+          NOTES="docs/release-notes/${TAG}.md"
+          if [ -f "$NOTES" ]; then
+            echo "notes=$NOTES" >> "$GITHUB_OUTPUT"
+            echo "gen=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "notes=" >> "$GITHUB_OUTPUT"
+            echo "gen=true" >> "$GITHUB_OUTPUT"
+          fi
+          echo "Release tag: $TAG"
+
+      - name: Publish GitHub Release (draft)
         uses: softprops/action-gh-release@v2
         with:
-          draft: true   # nothing is public until you review and click Publish
-          generate_release_notes: false
-          body_path: docs/release-notes/v1.01.md
+          # Draft, so a draft release with the APK is created for you to review —
+          # the git tag is only created when you click Publish. Nothing ships
+          # automatically.
+          draft: true
+          tag_name: ${{ steps.rel.outputs.tag }}
+          name: Domain AI ${{ steps.rel.outputs.tag }}
+          body_path: ${{ steps.rel.outputs.notes }}
+          generate_release_notes: ${{ steps.rel.outputs.gen }}
           files: app/build/outputs/apk/release/*.apk
