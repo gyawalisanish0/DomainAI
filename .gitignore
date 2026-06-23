@@ -1,0 +1,32 @@
+# Gradle
+.gradle/
+build/
+.kotlin/
+!gradle/wrapper/gradle-wrapper.jar
+
+# Native build intermediates (NDK/CMake)
+.cxx/
+
+# Android Studio / IntelliJ
+.idea/
+*.iml
+local.properties
+captures/
+
+# Android build outputs
+*.apk
+*.aab
+*.ap_
+*.dex
+
+# Signing (never commit your keystore or its passwords)
+keystore.properties
+*.jks
+*.keystore
+
+# Firebase project config (add your own; see google-services.json.example)
+google-services.json
+app/src/debug/google-services.json
+
+# OS
+.DS_Store
