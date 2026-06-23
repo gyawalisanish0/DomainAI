@@ -13,14 +13,14 @@
 </div>
 
 Every message is answered **on-device by default** with zero network access. The
-cloud is strictly opt-in — gated by a network kill switch and a see-before-send
-redactor that shows exactly what would leave your device.
+cloud is strictly opt-in — gated by a network kill switch and a PII redactor that
+strips sensitive information before anything is sent.
 
 ## Features
 
 - **Local by default** — replies generated on-device; no network unless you opt in per message.
 - **Network kill switch** — outbound requests made impossible at one auditable chokepoint; on by default.
-- **See-before-send + PII redaction** — review the exact redacted payload (emails, phones, SSNs, cards, IPs stripped) before any cloud call.
+- **PII redaction** — emails, phones, SSNs, cards and IPs stripped before any cloud call; each cloud reply shows the exact redacted text that was sent.
 - **Routing transparency** — every reply badged *On-device*, *Cloud*, or *Blocked*.
 - **Encrypted at rest** — AES-256 history keyed by the Android Keystore; backups off; no analytics or trackers.
 - **GPU acceleration** with an in-app CPU-vs-GPU benchmark, and a **configurable context window**.

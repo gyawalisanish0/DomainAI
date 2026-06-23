@@ -35,21 +35,18 @@ sg.act.domain
 ## Data flow for one message
 
 1. `ChatScreen` collects `ChatUiState` from `ChatViewModel`.
-2. User taps send. If cloud is requested *and* allowed *and* redaction is on, the
-   ViewModel pauses on a `CloudConfirmation` and the **see-before-send** dialog
-   appears with the exact redacted payload.
-3. On confirm (or for any local send), `ChatRepository.send` appends the user
-   message and calls `PrivacyRouter.answer`.
-4. `PrivacyRouter`:
+2. User taps send. For both local and cloud sends, `ChatRepository.send` appends
+   the user message and calls `PrivacyRouter.answer`.
+3. `PrivacyRouter`:
    - `useCloud == false` → answer **LOCAL**, always.
    - `useCloud == true` → `NetworkGuard.assertNetworkAllowed` must pass (kill
      switch off **and** consent given) or it falls back to LOCAL with a note.
    - Before any cloud call, the prompt **and history** are redacted; the redacted
-     preview is recorded for the UI.
+     text that was sent is recorded so the UI can show it on the reply.
    - On any cloud error, it falls back to LOCAL — the user is never left without a
      reply, and never silently escalated.
-5. The reply (with its `Route` and optional redacted preview) is appended and the
-   conversation is persisted encrypted.
+4. The reply (with its `Route` and, for cloud, the exact redacted text that was
+   sent) is appended and the conversation is persisted encrypted.
 
 ## Why a separate `PrivacyState`
 
@@ -82,8 +79,9 @@ llama/
 - `LLamaAndroid` owns the llama.cpp context and exposes `load`/`unload`/`send`
   (a `Flow<String>` of token deltas). The context is single-threaded, so every
   native call is serialized on one executor.
-- `LlamaCppBackend` adapts that to `LocalEngine.NativeBackend`, applying the Gemma
-  chat template (`GemmaPrompt`). `ModelManager` owns the lifecycle and hands
+- `LlamaCppBackend` adapts that to `LocalEngine.NativeBackend`, applying each loaded
+  model's own embedded chat template (`format_chat`), with a generic `ChatFormat`
+  fallback for models that ship none. `ModelManager` owns the lifecycle and hands
   `LocalEngine` a backend provider, so the active model swaps at runtime without
   rebuilding the router.
 - The JNI is written against llama.cpp's current C API and avoids the `common`
