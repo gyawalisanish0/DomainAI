@@ -16,7 +16,12 @@ name: Firebase Test Lab (device matrix)
 #  2. Enable these APIs: "Cloud Testing API" and "Cloud Tool Results API".
 #  3. Create a service account → grant role "Firebase Test Lab Admin"
 #     (add "Service Usage Consumer" too if prompted). Create a JSON key.
-#  4. In GitHub → repo Settings → Secrets and variables → Actions, add secret
+#  4. Grant that SAME service account a Cloud Storage write role: "Storage Admin"
+#     (roles/storage.admin), or least-privilege "Storage Object Admin"
+#     (roles/storage.objectAdmin). "Firebase Test Lab Admin" alone does NOT allow
+#     writing to the Test Lab results bucket — without this the run fails at the
+#     upload step with a 403 "storage.objects.create denied".
+#  5. In GitHub → repo Settings → Secrets and variables → Actions, add secret
 #     GCP_SA_KEY with the full JSON key contents.
 #  (GOOGLE_SERVICES_JSON_BASE64 — already set — supplies the project id.)
 #
