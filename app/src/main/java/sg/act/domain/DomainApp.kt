@@ -95,29 +95,40 @@ class AppContainer(app: DomainApp) {
             repository.privacyState.collect { CrashReporting.setEnabled(it.crashReportingEnabled) }
         }
 
-        // Drive the download progress notification. Gated on `downloading` so the
-        // startup model-load (which is also a Loading→Ready transition) never posts.
+        // Drive the download/import notification off the transfer lifecycle, then
+        // the in-memory load that follows it. Gated on `transferring`/`loading` so a
+        // plain model switch or the startup load (state-only, no transfer) never posts.
         appScope.launch {
-            var downloading = false
-            combine(modelManager.state, modelManager.downloadProgress) { s, p -> s to p }
-                .collect { (state, progress) ->
-                    when {
-                        progress != null -> {
-                            downloading = true
-                            val name = (state as? ModelManager.State.Loading)?.modelName
-                                ?: app.getString(R.string.app_name)
-                            downloadNotifier.progress(name, progress.fraction)
+            var transferring = false // a user download/import is in flight
+            var loading = false      // the post-transfer in-memory load has begun
+            combine(modelManager.state, modelManager.transfer) { s, t -> s to t }
+                .collect { (state, transfer) ->
+                    when (transfer) {
+                        is ModelManager.TransferState.Downloading -> {
+                            transferring = true
+                            downloadNotifier.progress(transfer.modelName, transfer.progress?.fraction ?: 0f)
                         }
-                        !downloading -> Unit // not our download; ignore startup loads
-                        state is ModelManager.State.Loading ->
+                        is ModelManager.TransferState.Importing -> {
+                            transferring = true
                             downloadNotifier.indeterminate(app.getString(R.string.model_initializing))
-                        state is ModelManager.State.Ready -> {
-                            downloadNotifier.complete(state.modelName); downloading = false
                         }
-                        state is ModelManager.State.Error -> {
-                            downloadNotifier.failed(); downloading = false
+                        is ModelManager.TransferState.Failed -> {
+                            downloadNotifier.failed(); transferring = false; loading = false
                         }
-                        else -> downloading = false
+                        ModelManager.TransferState.Idle -> when {
+                            !transferring -> Unit // not our transfer; ignore startup/switch loads
+                            state is ModelManager.State.Loading -> {
+                                loading = true
+                                downloadNotifier.indeterminate(app.getString(R.string.model_initializing))
+                            }
+                            state is ModelManager.State.Ready && loading -> {
+                                downloadNotifier.complete(state.modelName); transferring = false; loading = false
+                            }
+                            state is ModelManager.State.Error && loading -> {
+                                downloadNotifier.failed(); transferring = false; loading = false
+                            }
+                            else -> Unit
+                        }
                     }
                 }
         }

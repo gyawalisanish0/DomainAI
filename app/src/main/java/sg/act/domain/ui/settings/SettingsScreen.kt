@@ -169,6 +169,7 @@ fun SettingsScreen(
                 onImport = { importLauncher.launch(arrayOf("*/*")) },
                 onUnload = viewModel::unloadModel,
                 onCancelDownload = viewModel::cancelDownload,
+                onDismissTransfer = viewModel::dismissTransfer,
                 onSelect = viewModel::selectModel,
                 onDelete = viewModel::deleteModel,
                 onSetGpu = viewModel::setGpuEnabled,
@@ -397,6 +398,7 @@ private fun ModelSection(
     onImport: () -> Unit,
     onUnload: () -> Unit,
     onCancelDownload: () -> Unit,
+    onDismissTransfer: () -> Unit,
     onSelect: (String) -> Unit,
     onDelete: (String) -> Unit,
     onSetGpu: (Boolean) -> Unit,
@@ -412,35 +414,62 @@ private fun ModelSection(
 
         ModelStatusLine(state.modelState)
 
-        state.downloadProgress?.let { progress ->
-            val modelName = (state.modelState as? ModelManager.State.Loading)?.modelName.orEmpty()
-            LinearProgressIndicator(
-                progress = { progress.fraction },
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(dimensionResource(R.dimen.space_s)),
-            ) {
-                Text(
-                    stringResource(
-                        R.string.model_download_detail,
-                        modelName,
-                        (progress.fraction * 100).toInt(),
-                        formatBytes(progress.bytesRead),
-                        formatBytes(progress.totalBytes),
-                    ),
-                    style = MaterialTheme.typography.labelMedium,
-                    modifier = Modifier.weight(1f),
+        when (val t = state.transfer) {
+            is ModelManager.TransferState.Downloading -> {
+                val fraction = t.progress?.fraction ?: 0f
+                LinearProgressIndicator(
+                    progress = { fraction },
+                    modifier = Modifier.fillMaxWidth(),
                 )
-                TextButton(onClick = onCancelDownload) {
-                    Text(stringResource(R.string.model_download_confirm_cancel))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(dimensionResource(R.dimen.space_s)),
+                ) {
+                    Text(
+                        stringResource(
+                            R.string.model_download_detail,
+                            t.modelName,
+                            (fraction * 100).toInt(),
+                            formatBytes(t.progress?.bytesRead ?: 0L),
+                            formatBytes(t.progress?.totalBytes ?: 0L),
+                        ),
+                        style = MaterialTheme.typography.labelMedium,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = onCancelDownload) {
+                        Text(stringResource(R.string.model_download_confirm_cancel))
+                    }
                 }
             }
+            is ModelManager.TransferState.Importing -> {
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                Text(
+                    stringResource(R.string.model_importing, t.modelName),
+                    style = MaterialTheme.typography.labelMedium,
+                )
+            }
+            is ModelManager.TransferState.Failed -> {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(dimensionResource(R.dimen.space_s)),
+                ) {
+                    Text(
+                        stringResource(R.string.model_transfer_failed, t.modelName, t.message),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = colorResource(R.color.brand_blocked),
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = onDismissTransfer) {
+                        Text(stringResource(R.string.model_transfer_dismiss))
+                    }
+                }
+            }
+            ModelManager.TransferState.Idle -> {}
         }
 
         // Models already on the device (downloaded or imported).
-        val busy = state.downloadProgress != null
+        val busy = state.transfer is ModelManager.TransferState.Downloading ||
+            state.transfer is ModelManager.TransferState.Importing
         Text(
             stringResource(R.string.model_installed_title),
             style = MaterialTheme.typography.labelLarge,

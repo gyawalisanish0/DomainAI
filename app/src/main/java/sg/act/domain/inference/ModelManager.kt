@@ -69,13 +69,30 @@ class ModelManager(
         data class Error(val message: String) : State
     }
 
+    /**
+     * A model-acquisition process (network download or local import) in flight.
+     * This is its OWN lifecycle, kept separate from [State] (the in-memory model
+     * load), so a long download never masquerades as "loading", and a failed
+     * download/import never clobbers the model that is actually loaded.
+     */
+    sealed interface TransferState {
+        data object Idle : TransferState
+        data class Downloading(
+            val modelName: String,
+            val progress: ModelDownloader.Progress?,
+        ) : TransferState
+        data class Importing(val modelName: String) : TransferState
+        data class Failed(val modelName: String, val message: String) : TransferState
+    }
+
     private val mutex = Mutex()
 
     private val _state = MutableStateFlow<State>(State.NotLoaded)
     val state: StateFlow<State> = _state.asStateFlow()
 
-    private val _downloadProgress = MutableStateFlow<ModelDownloader.Progress?>(null)
-    val downloadProgress: StateFlow<ModelDownloader.Progress?> = _downloadProgress.asStateFlow()
+    /** Download/import lifecycle, separate from the in-memory [state]. */
+    private val _transfer = MutableStateFlow<TransferState>(TransferState.Idle)
+    val transfer: StateFlow<TransferState> = _transfer.asStateFlow()
 
     /** Every model file currently on disk (downloaded + imported), active flagged. */
     private val _installed = MutableStateFlow<List<InstalledModel>>(emptyList())
@@ -212,14 +229,15 @@ class ModelManager(
     suspend fun importModel(input: InputStream, fileName: String, displayName: String) =
         mutex.withLock {
             try {
-                _state.value = State.Loading(displayName)
+                _transfer.value = TransferState.Importing(displayName)
                 val file = withContext(Dispatchers.IO) {
                     modelStorage.importFrom(input, fileName)
                 }
+                _transfer.value = TransferState.Idle
                 activate(file.absolutePath, displayName, file.name, ModelSource.IMPORT, file.length())
             } catch (e: Exception) {
                 sg.act.domain.core.CrashReporting.record(e)
-                _state.value = State.Error(e.message ?: "Import failed.")
+                _transfer.value = TransferState.Failed(displayName, e.message ?: "Import failed.")
             }
         }
 
@@ -230,40 +248,49 @@ class ModelManager(
      * report an error once every mirror is exhausted.
      */
     suspend fun downloadModel(spec: ModelSpec) = mutex.withLock {
-        _state.value = State.Loading(spec.displayName)
+        _transfer.value = TransferState.Downloading(spec.displayName, null)
         val temp = modelStorage.tempFor(spec.fileName)
         var lastError: String? = null
 
         for ((index, url) in spec.urls.withIndex()) {
             try {
-                downloader.download(url, spec.sizeBytes, temp).collect { _downloadProgress.value = it }
+                downloader.download(url, spec.sizeBytes, temp).collect {
+                    _transfer.value = TransferState.Downloading(spec.displayName, it)
+                }
                 // Guard against truncated/corrupt transfers before promoting the file.
                 if (!modelStorage.isGguf(temp)) {
                     throw IllegalStateException("downloaded file is not a valid GGUF")
                 }
-                _downloadProgress.value = null
                 val file = withContext(Dispatchers.IO) { modelStorage.finalize(temp, spec.fileName) }
+                // Download done; the in-memory load below sets State.Loading/Ready.
+                _transfer.value = TransferState.Idle
                 activate(file.absolutePath, spec.displayName, file.name, ModelSource.DOWNLOAD, file.length())
                 return@withLock // success
             } catch (e: CancellationException) {
                 // User cancelled: drop the partial and return to idle, don't fall
-                // through to the next mirror.
-                _downloadProgress.value = null
+                // through to the next mirror. The loaded model (if any) is untouched.
                 withContext(NonCancellable + Dispatchers.IO) { temp.delete() }
-                _state.value = State.NotLoaded
+                _transfer.value = TransferState.Idle
                 throw e
             } catch (e: Exception) {
                 lastError = e.message
-                _downloadProgress.value = null
                 withContext(Dispatchers.IO) { temp.delete() }
                 sg.act.domain.core.CrashReporting.record(e)
                 // try the next mirror (index + 1 of spec.urls.size)
             }
         }
 
-        _state.value = State.Error(
+        // Every mirror failed: surface it on the transfer channel without disturbing
+        // the model that is actually loaded.
+        _transfer.value = TransferState.Failed(
+            spec.displayName,
             "All ${spec.urls.size} mirrors failed. ${lastError.orEmpty()}".trim(),
         )
+    }
+
+    /** Dismiss a [TransferState.Failed] back to idle (e.g. user taps a dismiss). */
+    fun clearTransfer() {
+        if (_transfer.value is TransferState.Failed) _transfer.value = TransferState.Idle
     }
 
     /** Result of a one-shot speed benchmark on the loaded model. */

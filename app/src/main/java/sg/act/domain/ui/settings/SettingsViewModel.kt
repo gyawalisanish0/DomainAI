@@ -9,7 +9,6 @@ import androidx.lifecycle.viewModelScope
 import sg.act.domain.data.repository.ChatRepository
 import sg.act.domain.inference.InstalledModel
 import sg.act.domain.inference.ModelCatalog
-import sg.act.domain.inference.ModelDownloader
 import sg.act.domain.inference.ModelManager
 import sg.act.domain.inference.ModelSpec
 import sg.act.domain.inference.OpenRouterClient
@@ -33,7 +32,7 @@ data class SettingsUiState(
     val privacy: PrivacyState = PrivacyState(),
     val hasProvider: Boolean = false,
     val modelState: ModelManager.State = ModelManager.State.NotLoaded,
-    val downloadProgress: ModelDownloader.Progress? = null,
+    val transfer: ModelManager.TransferState = ModelManager.TransferState.Idle,
     val catalog: List<ModelOption> = emptyList(),
     val installed: List<InstalledModel> = emptyList(),
     val totalRamMb: Long = 0,
@@ -86,8 +85,8 @@ class SettingsViewModel(
         modelManager.state
             .onEach { _ui.value = _ui.value.copy(modelState = it) }
             .launchIn(viewModelScope)
-        modelManager.downloadProgress
-            .onEach { _ui.value = _ui.value.copy(downloadProgress = it) }
+        modelManager.transfer
+            .onEach { _ui.value = _ui.value.copy(transfer = it) }
             .launchIn(viewModelScope)
         modelManager.installed
             .onEach { _ui.value = _ui.value.copy(installed = it) }
@@ -195,6 +194,9 @@ class SettingsViewModel(
     }
 
     fun cancelDownload() = modelManager.cancelDownload()
+
+    /** Dismiss a failed download/import notice. */
+    fun dismissTransfer() = modelManager.clearTransfer()
 
     fun unloadModel() = viewModelScope.launch { modelManager.unload() }
 

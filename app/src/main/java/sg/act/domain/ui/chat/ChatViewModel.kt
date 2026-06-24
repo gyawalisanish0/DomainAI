@@ -26,6 +26,8 @@ data class ChatUiState(
     val input: String = "",
     val isGenerating: Boolean = false,
     val modelState: ModelManager.State = ModelManager.State.NotLoaded,
+    // Download/import in flight (separate from the in-memory load above).
+    val transfer: ModelManager.TransferState = ModelManager.TransferState.Idle,
     // Model selection (for the chat-screen picker + subtitle).
     val installed: List<InstalledModel> = emptyList(),
     val preferCloud: Boolean = false,
@@ -77,7 +79,8 @@ class ChatViewModel(
             modelManager.installed,
             repository.preferCloud,
             repository.cloudModelId,
-        ) { s, installed, preferCloud, cloudModelId ->
+            modelManager.transfer,
+        ) { s, installed, preferCloud, cloudModelId, transfer ->
             _ui.value.copy(
                 conversation = s.conversation,
                 conversations = s.conversations,
@@ -87,6 +90,7 @@ class ChatViewModel(
                 installed = installed,
                 preferCloud = preferCloud,
                 cloudModelId = cloudModelId,
+                transfer = transfer,
             )
         }.onEach { _ui.value = it }.launchIn(viewModelScope)
     }
