@@ -76,6 +76,7 @@ import sg.act.domain.ui.components.ContextLengthRow
 import sg.act.domain.ui.components.KillSwitchChip
 import sg.act.domain.ui.components.MessageBubble
 import sg.act.domain.ui.components.SettingSwitchRow
+import sg.act.domain.ui.components.ThreadCountRow
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -129,6 +130,7 @@ fun ChatScreen(
             onSelectCloud = { viewModel.selectCloudModel() },
             onSetGpu = viewModel::setGpuEnabled,
             onSetContext = viewModel::setContextTokens,
+            onSetThreads = viewModel::setThreadCount,
             onDismiss = { showInferencePanel = false },
         )
     }
@@ -578,6 +580,7 @@ private fun InferencePanelSheet(
     onSelectCloud: () -> Unit,
     onSetGpu: (Boolean) -> Unit,
     onSetContext: (Int) -> Unit,
+    onSetThreads: (Int) -> Unit,
     onDismiss: () -> Unit,
 ) {
     ModalBottomSheet(
@@ -627,6 +630,12 @@ private fun InferencePanelSheet(
                 effectiveTokens = state.effectiveContextTokens,
                 options = state.contextOptions,
                 onSelect = onSetContext,
+            )
+            ThreadCountRow(
+                chosenThreads = state.threadCount,
+                effectiveThreads = state.effectiveThreads,
+                options = state.threadOptions,
+                onSelect = onSetThreads,
             )
         }
     }

@@ -14,6 +14,11 @@ All notable changes to Domain AI are documented here. This project adheres to
   on the powerful cluster instead of drifting onto the little cores (best-effort;
   some Android schedulers may override the affinity request). Flash attention was
   verified already auto-enabled.
+- **User-configurable generation threads.** A new "Generation threads" setting (in
+  Settings and the chat quick-panel, alongside context length) lets you override the
+  adaptive count: Auto, or a fixed 2–6 bounded by your device's cores. The chosen
+  count pins to that many of the fastest cores, so picking fewer keeps generation on
+  the big cluster. Changing it reloads the model.
 
 ### Fixed
 - **Consistent model selection.** The chat top-bar subtitle, the quick-panel

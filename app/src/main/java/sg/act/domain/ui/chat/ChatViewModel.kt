@@ -37,6 +37,9 @@ data class ChatUiState(
     val contextTokens: Int = 0,
     val contextOptions: List<Int> = emptyList(),
     val effectiveContextTokens: Int = 0,
+    val threadCount: Int = 0,
+    val threadOptions: List<Int> = emptyList(),
+    val effectiveThreads: Int = 0,
 )
 
 class ChatViewModel(
@@ -64,6 +67,9 @@ class ChatViewModel(
             contextTokens = modelManager.contextTokens(),
             contextOptions = modelManager.contextOptions(),
             effectiveContextTokens = modelManager.effectiveContextTokens(),
+            threadCount = modelManager.threadCount(),
+            threadOptions = modelManager.threadOptions(),
+            effectiveThreads = modelManager.effectiveThreads(),
         )
         val core = combine(
             repository.conversation,
@@ -118,6 +124,15 @@ class ChatViewModel(
         _ui.value = _ui.value.copy(
             contextTokens = tokens,
             effectiveContextTokens = modelManager.effectiveContextTokens(),
+        )
+    }
+
+    /** Set the generation thread count (0 = Auto) from the quick-panel; reloads the model. */
+    fun setThreadCount(count: Int) {
+        modelManager.setThreadCount(count)
+        _ui.value = _ui.value.copy(
+            threadCount = count,
+            effectiveThreads = modelManager.effectiveThreads(),
         )
     }
 

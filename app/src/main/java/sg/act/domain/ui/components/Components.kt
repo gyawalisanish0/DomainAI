@@ -432,6 +432,68 @@ fun ContextLengthRow(
 }
 
 /**
+ * Generation-threads picker row: title/summary on the left, a dropdown of "Auto"
+ * plus the device-allowed thread counts on the right. [chosenThreads] of 0 means
+ * Auto, and [effectiveThreads] is the value Auto currently resolves to (shown in
+ * the label).
+ */
+@Composable
+fun ThreadCountRow(
+    chosenThreads: Int,
+    effectiveThreads: Int,
+    options: List<Int>,
+    onSelect: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(dimensionResource(R.dimen.space_l)),
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                stringResource(R.string.setting_threads_title),
+                style = MaterialTheme.typography.bodyLarge,
+            )
+            Text(
+                stringResource(R.string.setting_threads_summary),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Box {
+            OutlinedButton(onClick = { expanded = true }) {
+                Text(
+                    if (chosenThreads > 0) {
+                        stringResource(R.string.threads_count_label, chosenThreads)
+                    } else {
+                        stringResource(R.string.threads_auto_label, effectiveThreads)
+                    },
+                )
+                Icon(
+                    Icons.Filled.ExpandMore,
+                    contentDescription = stringResource(R.string.cd_threads_menu),
+                    modifier = Modifier.size(dimensionResource(R.dimen.icon_small)),
+                )
+            }
+            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.threads_auto_label, effectiveThreads)) },
+                    onClick = { onSelect(0); expanded = false },
+                )
+                options.forEach { count ->
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.threads_count_label, count)) },
+                        onClick = { onSelect(count); expanded = false },
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
  * A small pill shown only when the network kill switch is engaged, so the user
  * always knows the app is fully offline. When the switch is off, nothing is shown.
  */

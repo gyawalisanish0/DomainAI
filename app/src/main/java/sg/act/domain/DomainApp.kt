@@ -14,6 +14,7 @@ import sg.act.domain.inference.ContextSettings
 import sg.act.domain.inference.GpuGuard
 import sg.act.domain.inference.LocalEngine
 import sg.act.domain.inference.ModelManager
+import sg.act.domain.inference.ThreadSettings
 import sg.act.domain.privacy.DeviceCapabilities
 import sg.act.domain.privacy.PrivacySettings
 import kotlinx.coroutines.CoroutineScope
@@ -51,9 +52,11 @@ class AppContainer(app: DomainApp) {
         scope = appScope,
         deviceRecommendedContext = deviceCapabilities.recommendedContextTokens(),
         deviceMaxContext = deviceCapabilities.maxAllowedContextTokens(),
-        deviceThreads = deviceCapabilities.recommendedThreads,
-        deviceAffinity = deviceCapabilities.affinityCores,
+        deviceAutoThreads = deviceCapabilities.recommendedThreads,
+        deviceMaxThreads = deviceCapabilities.maxThreads,
+        coresBySpeed = deviceCapabilities.coresBySpeed,
         contextSettings = ContextSettings(app),
+        threadSettings = ThreadSettings(app),
         gpuGuard = GpuGuard(app),
         nativeLibDir = app.applicationInfo.nativeLibraryDir,
         sdkInt = android.os.Build.VERSION.SDK_INT,

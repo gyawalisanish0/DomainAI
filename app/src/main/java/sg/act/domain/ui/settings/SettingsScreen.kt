@@ -67,6 +67,7 @@ import sg.act.domain.inference.ModelSpec
 import sg.act.domain.inference.OpenRouterClient
 import sg.act.domain.privacy.DeviceCapabilities
 import sg.act.domain.ui.components.ContextLengthRow
+import sg.act.domain.ui.components.ThreadCountRow
 import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -174,6 +175,7 @@ fun SettingsScreen(
                 onDelete = viewModel::deleteModel,
                 onSetGpu = viewModel::setGpuEnabled,
                 onSetContext = viewModel::setContextTokens,
+                onSetThreads = viewModel::setThreadCount,
                 onBenchmark = viewModel::runBenchmark,
             )
 
@@ -403,6 +405,7 @@ private fun ModelSection(
     onDelete: (String) -> Unit,
     onSetGpu: (Boolean) -> Unit,
     onSetContext: (Int) -> Unit,
+    onSetThreads: (Int) -> Unit,
     onBenchmark: () -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(dimensionResource(R.dimen.space_s))) {
@@ -536,6 +539,12 @@ private fun ModelSection(
             effectiveTokens = state.effectiveContextTokens,
             options = state.contextOptions,
             onSelect = onSetContext,
+        )
+        ThreadCountRow(
+            chosenThreads = state.threadCount,
+            effectiveThreads = state.effectiveThreads,
+            options = state.threadOptions,
+            onSelect = onSetThreads,
         )
         Row(
             verticalAlignment = Alignment.CenterVertically,

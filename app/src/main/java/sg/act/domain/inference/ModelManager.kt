@@ -49,12 +49,16 @@ class ModelManager(
     private val deviceRecommendedContext: Int,
     /** Largest context the user may pick on this device (bounds the presets). */
     private val deviceMaxContext: Int,
-    /** Generation thread count for this device (performance-core count). */
-    private val deviceThreads: Int,
-    /** Fastest-core indices to pin the inference threadpool to (empty = no pinning). */
-    private val deviceAffinity: IntArray,
+    /** Thread count used for "Auto" — the device-adaptive recommendation. */
+    private val deviceAutoThreads: Int,
+    /** Largest thread count the user may pick on this device (bounds the presets). */
+    private val deviceMaxThreads: Int,
+    /** All core indices ordered fastest-first; the threadpool pins to the first N. */
+    private val coresBySpeed: IntArray,
     /** User's context-length choice (0 = Auto). Read at each load. */
     private val contextSettings: ContextSettings,
+    /** User's thread-count choice (0 = Auto). Read at each load. */
+    private val threadSettings: ThreadSettings,
     /** Crash-safe GPU offload guard (forces full offload with CPU fallback). */
     private val gpuGuard: GpuGuard,
     /** App-private native lib dir + device API level for selective backend loading. */
@@ -338,6 +342,24 @@ class ModelManager(
         scope.launch { loadActiveModelIfPresent() }
     }
 
+    /** The user's chosen thread count (0 = Auto). */
+    fun threadCount(): Int = threadSettings.chosenThreads()
+
+    /** Selectable thread-count presets allowed on this device (2..max). */
+    fun threadOptions(): List<Int> = (2..deviceMaxThreads).toList()
+
+    /** The thread count that will actually be used: chosen, or device Auto. */
+    fun effectiveThreads(): Int {
+        val chosen = threadSettings.chosenThreads()
+        return if (chosen > 0) chosen.coerceIn(2, deviceMaxThreads) else deviceAutoThreads
+    }
+
+    /** Set the thread count (0 = Auto) and reload the active model so it applies. */
+    fun setThreadCount(count: Int) {
+        threadSettings.setChosenThreads(count)
+        scope.launch { loadActiveModelIfPresent() }
+    }
+
     /**
      * Run a fixed prompt through the loaded model and return its timing, so GPU vs
      * CPU can be compared on identical input. Returns null if no model is loaded.
@@ -430,7 +452,15 @@ class ModelManager(
         llama.unload() // free any prior/partial context first (no-op if none)
         backend = null
         gpuGuard.beginAttempt(gpuLayers)
-        llama.load(path, effectiveContextTokens(), gpuLayers, deviceThreads, deviceAffinity)
+        val threads = effectiveThreads()
+        // Pin to the fastest `threads` cores so generation stays on the big cluster;
+        // empty when /sys was unreadable, in which case the native side skips pinning.
+        val affinity = if (coresBySpeed.isNotEmpty()) {
+            coresBySpeed.take(threads).toIntArray()
+        } else {
+            IntArray(0)
+        }
+        llama.load(path, effectiveContextTokens(), gpuLayers, threads, affinity)
         gpuGuard.endAttempt()
         backend = LlamaCppBackend(displayName, llama)
         val hasGpuDevice = llama.backendInfo().contains("[GPU]")

@@ -119,6 +119,13 @@
     <string name="context_tokens_label">%1$d tokens</string>
     <string name="cd_context_menu">Choose context length</string>
 
+    <!-- Generation threads (user-configurable) -->
+    <string name="setting_threads_title">Generation threads</string>
+    <string name="setting_threads_summary">How many CPU cores the model uses to generate replies. More can be faster but warmer and less responsive; capped to your device. The chosen cores are the fastest ones. Changing it reloads the model.</string>
+    <string name="threads_auto_label">Auto (%1$d)</string>
+    <string name="threads_count_label">%1$d threads</string>
+    <string name="cd_threads_menu">Choose generation threads</string>
+
     <!-- Chat inference quick-panel (bottom-left of the input bar) -->
     <string name="cd_inference_panel">Model &amp; inference settings</string>
     <string name="inference_panel_title">Model &amp; inference</string>

@@ -45,6 +45,10 @@ data class SettingsUiState(
     val contextTokens: Int = 0,
     val contextOptions: List<Int> = emptyList(),
     val effectiveContextTokens: Int = 0,
+    // Generation threads (0 = Auto), allowed presets, and the value Auto resolves to.
+    val threadCount: Int = 0,
+    val threadOptions: List<Int> = emptyList(),
+    val effectiveThreads: Int = 0,
     // OpenRouter free-model picker
     val openRouterModels: List<OpenRouterClient.FreeModel> = emptyList(),
     val openRouterLoading: Boolean = false,
@@ -72,6 +76,9 @@ class SettingsViewModel(
             contextTokens = modelManager.contextTokens(),
             contextOptions = modelManager.contextOptions(),
             effectiveContextTokens = modelManager.effectiveContextTokens(),
+            threadCount = modelManager.threadCount(),
+            threadOptions = modelManager.threadOptions(),
+            effectiveThreads = modelManager.effectiveThreads(),
             catalog = ModelCatalog.models.map {
                 ModelOption(it, deviceCapabilities.rate(it.minRamMb))
             },
@@ -214,6 +221,16 @@ class SettingsViewModel(
         _ui.value = _ui.value.copy(
             contextTokens = tokens,
             effectiveContextTokens = modelManager.effectiveContextTokens(),
+            benchmark = null,
+        )
+    }
+
+    /** Set the generation thread count (0 = Auto); reloads the active model to apply it. */
+    fun setThreadCount(count: Int) {
+        modelManager.setThreadCount(count)
+        _ui.value = _ui.value.copy(
+            threadCount = count,
+            effectiveThreads = modelManager.effectiveThreads(),
             benchmark = null,
         )
     }

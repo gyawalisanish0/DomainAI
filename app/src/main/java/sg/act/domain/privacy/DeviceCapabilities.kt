@@ -24,22 +24,24 @@ class DeviceCapabilities(context: Context) {
     private val cpuProfile = computeCpuProfile()
 
     /**
-     * Generation thread count, probed **once** at startup (CPU topology is fixed for
-     * the device). Uses **most** of the cores but leaves headroom (1–2 cores) so the
-     * UI and system stay responsive, and never drops below the performance-core
-     * count (capped at 8 — matmul stops scaling beyond that). On an 8-core 4+4 this
-     * yields **6** threads (not 4), scaling with the device.
+     * Device-adaptive **Auto** thread count, probed **once** at startup (CPU topology
+     * is fixed). Uses most of the cores but leaves headroom (1–2) so the UI stays
+     * responsive, never below the performance-core count, **capped at 6**. On an
+     * 8-core 4+4 this yields 6; smaller CPUs scale down. The user can override this in
+     * Settings / the chat quick-panel (see [maxThreads]).
      */
     val recommendedThreads: Int = cpuProfile.first
 
+    /** Largest thread count the user may select on this device: `2..min(6, cores)`. */
+    val maxThreads: Int = minOf(6, Runtime.getRuntime().availableProcessors()).coerceAtLeast(2)
+
     /**
-     * Indices of the fastest [recommendedThreads] cores, for pinning the inference
-     * threadpool to them (so generation runs on the powerful cores instead of
-     * drifting onto the little ones). Empty when `/sys` is unreadable — then only the
-     * thread count is applied and the scheduler chooses cores. Pinning is best-effort:
-     * Android's cpuset/EAS scheduler may override it.
+     * All core indices ordered **fastest first** (empty if `/sys` is unreadable). The
+     * inference threadpool pins to the first `effectiveThreads` of these, so picking a
+     * smaller thread count naturally keeps generation on the primary/big cores.
+     * Pinning is best-effort — Android's cpuset/EAS scheduler may override it.
      */
-    val affinityCores: IntArray = cpuProfile.second
+    val coresBySpeed: IntArray = cpuProfile.second
 
     private fun computeCpuProfile(): Pair<Int, IntArray> {
         val total = Runtime.getRuntime().availableProcessors().coerceAtLeast(1)
@@ -59,16 +61,15 @@ class DeviceCapabilities(context: Context) {
             0
         }
         // Reserve a couple of cores for the UI/system on bigger CPUs (one on small
-        // ones), but never use fewer than the performance cores. Cap at 8.
+        // ones), but never fewer than the performance cores. Cap at 6.
         val reserve = if (total >= 6) 2 else 1
-        val threads = maxOf(performance, total - reserve).coerceIn(2, minOf(total, 8))
-        // Pin to the `threads` fastest cores; skip pinning if frequencies are unknown.
-        val affinity = if (haveFreqs) {
-            (0 until total).sortedByDescending { freqs[it]!! }.take(threads).toIntArray()
+        val threads = maxOf(performance, total - reserve).coerceIn(2, minOf(total, 6))
+        val sorted = if (haveFreqs) {
+            (0 until total).sortedByDescending { freqs[it]!! }.toIntArray()
         } else {
             IntArray(0)
         }
-        return threads to affinity
+        return threads to sorted
     }
 
     /**
