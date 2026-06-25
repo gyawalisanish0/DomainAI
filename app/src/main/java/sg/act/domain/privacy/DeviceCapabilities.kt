@@ -21,42 +21,54 @@ class DeviceCapabilities(context: Context) {
 
     val isLowRam: Boolean = activityManager.isLowRamDevice
 
+    private val cpuProfile = computeCpuProfile()
+
     /**
      * Generation thread count, probed **once** at startup (CPU topology is fixed for
      * the device). Uses **most** of the cores but leaves headroom (1–2 cores) so the
      * UI and system stay responsive, and never drops below the performance-core
-     * count. Performance cores are those above the slowest frequency cluster.
-     *
-     * This is deliberately broader than "big cores only": on an 8-core 4+4 it yields
-     * **6** threads (not 4), scaling down on smaller CPUs and up to the cap on
-     * higher-core flagships. The matmul barrier means the slowest thread bounds each
-     * step, so the true optimum is device-specific — the in-app benchmark is the
-     * final word; this is a strong default.
+     * count (capped at 8 — matmul stops scaling beyond that). On an 8-core 4+4 this
+     * yields **6** threads (not 4), scaling with the device.
      */
-    val recommendedThreads: Int = computeRecommendedThreads()
+    val recommendedThreads: Int = cpuProfile.first
 
-    private fun computeRecommendedThreads(): Int {
+    /**
+     * Indices of the fastest [recommendedThreads] cores, for pinning the inference
+     * threadpool to them (so generation runs on the powerful cores instead of
+     * drifting onto the little ones). Empty when `/sys` is unreadable — then only the
+     * thread count is applied and the scheduler chooses cores. Pinning is best-effort:
+     * Android's cpuset/EAS scheduler may override it.
+     */
+    val affinityCores: IntArray = cpuProfile.second
+
+    private fun computeCpuProfile(): Pair<Int, IntArray> {
         val total = Runtime.getRuntime().availableProcessors().coerceAtLeast(1)
-        val freqs = (0 until total).mapNotNull { cpu ->
+        val freqs: List<Long?> = (0 until total).map { cpu ->
             runCatching {
                 java.io.File("/sys/devices/system/cpu/cpu$cpu/cpufreq/cpuinfo_max_freq")
                     .readText().trim().toLong()
             }.getOrNull()
         }
+        val haveFreqs = freqs.all { it != null }
         // Performance cores = those above the slowest (little) cluster. 0 when /sys
         // is unreadable or the CPU is single-tier (all cores same max frequency).
-        val performance = if (freqs.size == total && freqs.isNotEmpty()) {
-            val min = freqs.min()
-            freqs.count { it > min }
+        val performance = if (haveFreqs) {
+            val min = freqs.filterNotNull().min()
+            freqs.count { it!! > min }
         } else {
             0
         }
         // Reserve a couple of cores for the UI/system on bigger CPUs (one on small
-        // ones), but never use fewer than the performance cores. Cap at 8 — mobile
-        // matmul stops scaling beyond that.
+        // ones), but never use fewer than the performance cores. Cap at 8.
         val reserve = if (total >= 6) 2 else 1
-        val threads = maxOf(performance, total - reserve)
-        return threads.coerceIn(2, minOf(total, 8))
+        val threads = maxOf(performance, total - reserve).coerceIn(2, minOf(total, 8))
+        // Pin to the `threads` fastest cores; skip pinning if frequencies are unknown.
+        val affinity = if (haveFreqs) {
+            (0 until total).sortedByDescending { freqs[it]!! }.take(threads).toIntArray()
+        } else {
+            IntArray(0)
+        }
+        return threads to affinity
     }
 
     /**

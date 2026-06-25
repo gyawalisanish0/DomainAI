@@ -16,6 +16,12 @@
 
 #include "llama.h"
 #include "ggml-backend.h"
+#include "ggml-cpu.h"
+
+// Threadpool pinned to the device's fastest cores (see new_context). The app keeps
+// a single context loaded at a time, so one global handle is enough; it is created
+// with the context and freed with it.
+static ggml_threadpool *g_threadpool = nullptr;
 
 #define TAG "llama-android"
 #define LOGi(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
@@ -187,7 +193,7 @@ Java_sg_act_domain_llama_LLamaAndroid_free_1model(JNIEnv *, jobject, jlong model
 }
 
 JNIEXPORT jlong JNICALL
-Java_sg_act_domain_llama_LLamaAndroid_new_1context(JNIEnv *, jobject, jlong jmodel, jint n_ctx_requested, jint n_threads_requested) {
+Java_sg_act_domain_llama_LLamaAndroid_new_1context(JNIEnv *env, jobject, jlong jmodel, jint n_ctx_requested, jint n_threads_requested, jintArray jaffinity) {
     auto *model = reinterpret_cast<llama_model *>(jmodel);
     if (model == nullptr) return 0;
 
@@ -201,8 +207,8 @@ Java_sg_act_domain_llama_LLamaAndroid_new_1context(JNIEnv *, jobject, jlong jmod
     params.n_ctx = n_ctx;
     params.n_batch = N_BATCH;
     params.n_ubatch = N_BATCH;
-    // Thread count is chosen on the Kotlin side from the device's performance-core
-    // count (see DeviceCapabilities.recommendedThreads). Fall back to 4 if unset.
+    // Thread count is chosen on the Kotlin side from the device's CPU (see
+    // DeviceCapabilities.recommendedThreads). Fall back to 4 if unset.
     const int threads = n_threads_requested > 0 ? n_threads_requested : 4;
     params.n_threads = threads;
     params.n_threads_batch = threads;
@@ -213,6 +219,34 @@ Java_sg_act_domain_llama_LLamaAndroid_new_1context(JNIEnv *, jobject, jlong jmod
         LOGe("llama_init_from_model failed");
         return 0;
     }
+
+    // Pin the worker threads to the device's fastest cores so generation stays on the
+    // powerful cores instead of drifting onto the little ones. Best-effort: Android's
+    // cpuset/EAS scheduler may override the affinity request. Empty list = no pinning.
+    if (g_threadpool != nullptr) { ggml_threadpool_free(g_threadpool); g_threadpool = nullptr; }
+    const jsize n_aff = jaffinity != nullptr ? env->GetArrayLength(jaffinity) : 0;
+    if (n_aff > 0) {
+        jint *cores = env->GetIntArrayElements(jaffinity, nullptr);
+        ggml_threadpool_params tpp = ggml_threadpool_params_default(threads);
+        std::string mask_log;
+        for (jsize i = 0; i < n_aff; i++) {
+            const int cpu = cores[i];
+            if (cpu >= 0 && cpu < GGML_MAX_N_THREADS) {
+                tpp.cpumask[cpu] = true;
+                mask_log += (mask_log.empty() ? "" : ",") + std::to_string(cpu);
+            }
+        }
+        env->ReleaseIntArrayElements(jaffinity, cores, JNI_ABORT);
+        tpp.strict_cpu = false; // share the mask across workers; scheduler balances within it
+        g_threadpool = ggml_threadpool_new(&tpp);
+        if (g_threadpool != nullptr) {
+            llama_attach_threadpool(ctx, g_threadpool, g_threadpool);
+            LOGi("Pinned %d worker threads to cores [%s] (best-effort)", threads, mask_log.c_str());
+        } else {
+            LOGe("ggml_threadpool_new failed; running without core pinning");
+        }
+    }
+
     LOGi("Context ready: n_ctx=%d (trained=%d)", n_ctx, trained);
     return reinterpret_cast<jlong>(ctx);
 }
@@ -224,7 +258,13 @@ Java_sg_act_domain_llama_LLamaAndroid_context_1size(JNIEnv *, jobject, jlong ctx
 
 JNIEXPORT void JNICALL
 Java_sg_act_domain_llama_LLamaAndroid_free_1context(JNIEnv *, jobject, jlong ctx) {
-    llama_free(reinterpret_cast<llama_context *>(ctx));
+    auto *c = reinterpret_cast<llama_context *>(ctx);
+    if (g_threadpool != nullptr) {
+        if (c != nullptr) llama_detach_threadpool(c);
+        ggml_threadpool_free(g_threadpool);
+        g_threadpool = nullptr;
+    }
+    llama_free(c);
 }
 
 JNIEXPORT jlong JNICALL

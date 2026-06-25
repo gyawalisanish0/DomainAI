@@ -6,11 +6,14 @@ All notable changes to Domain AI are documented here. This project adheres to
 ## [1.05] — 2026-06-25
 
 ### Performance
-- **Adaptive generation threads.** Thread count is now probed from the device's CPU
-  at startup instead of a hardcoded 4: it uses most of the cores while leaving
-  headroom for the UI (an 8-core phone uses ~6 threads), and never fewer than the
-  performance-core count — quicker on mid-range and flagship CPUs that previously
-  sat at 4. Flash attention was verified already auto-enabled.
+- **Adaptive, core-pinned generation threads.** Thread count is now probed from the
+  device's CPU at startup instead of a hardcoded 4: it uses most of the cores while
+  leaving headroom for the UI (an 8-core phone uses ~6 threads), and never fewer than
+  the performance-core count — quicker on mid-range and flagship CPUs that previously
+  sat at 4. The threads are also **pinned to the fastest cores** so generation stays
+  on the powerful cluster instead of drifting onto the little cores (best-effort;
+  some Android schedulers may override the affinity request). Flash attention was
+  verified already auto-enabled.
 
 ### Fixed
 - **Consistent model selection.** The chat top-bar subtitle, the quick-panel

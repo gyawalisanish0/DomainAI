@@ -95,7 +95,7 @@ class LLamaAndroid private constructor() {
         addAssistant: Boolean,
     ): String
     private external fun free_model(model: Long)
-    private external fun new_context(model: Long, nCtx: Int, nThreads: Int): Long
+    private external fun new_context(model: Long, nCtx: Int, nThreads: Int, affinityCores: IntArray): Long
     private external fun context_size(context: Long): Int
     private external fun free_context(context: Long)
     private external fun backend_init(numa: Boolean, libDir: String?, sdkInt: Int)
@@ -125,7 +125,13 @@ class LLamaAndroid private constructor() {
      * [nCtx] is the requested context length (clamped to the model's trained
      * context natively); pass the device-appropriate value.
      */
-    suspend fun load(pathToModel: String, nCtx: Int, nGpuLayers: Int = 0, nThreads: Int = 0) {
+    suspend fun load(
+        pathToModel: String,
+        nCtx: Int,
+        nGpuLayers: Int = 0,
+        nThreads: Int = 0,
+        affinityCores: IntArray = IntArray(0),
+    ) {
         withContext(runLoop) {
             when (threadLocalState.get()) {
                 is State.Idle -> {
@@ -137,7 +143,7 @@ class LLamaAndroid private constructor() {
                         )
                     }
 
-                    val context = new_context(model, nCtx, nThreads)
+                    val context = new_context(model, nCtx, nThreads, affinityCores)
                     if (context == 0L) throw IllegalStateException("new_context() failed")
 
                     val batch = new_batch(512, 0, 1)
