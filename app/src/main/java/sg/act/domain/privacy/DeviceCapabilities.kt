@@ -23,12 +23,15 @@ class DeviceCapabilities(context: Context) {
 
     /**
      * Generation thread count, probed **once** at startup (CPU topology is fixed for
-     * the device). Uses the **performance-core cluster**, not the total core count:
-     * on a big.LITTLE CPU, adding the slow little cores as inference threads *hurts*
-     * (every matmul barrier waits on the slowest thread) and starves the UI. Cores
-     * are clustered by max frequency — the little cluster sits at a distinctly lower
-     * `cpuinfo_max_freq`, so "performance cores" are those above the slowest cluster.
-     * Falls back to ~half the cores when `/sys` is unreadable; floored at 2, capped.
+     * the device). Uses **most** of the cores but leaves headroom (1–2 cores) so the
+     * UI and system stay responsive, and never drops below the performance-core
+     * count. Performance cores are those above the slowest frequency cluster.
+     *
+     * This is deliberately broader than "big cores only": on an 8-core 4+4 it yields
+     * **6** threads (not 4), scaling down on smaller CPUs and up to the cap on
+     * higher-core flagships. The matmul barrier means the slowest thread bounds each
+     * step, so the true optimum is device-specific — the in-app benchmark is the
+     * final word; this is a strong default.
      */
     val recommendedThreads: Int = computeRecommendedThreads()
 
@@ -40,13 +43,19 @@ class DeviceCapabilities(context: Context) {
                     .readText().trim().toLong()
             }.getOrNull()
         }
+        // Performance cores = those above the slowest (little) cluster. 0 when /sys
+        // is unreadable or the CPU is single-tier (all cores same max frequency).
         val performance = if (freqs.size == total && freqs.isNotEmpty()) {
             val min = freqs.min()
-            freqs.count { it > min } // cores above the slowest (little) cluster
+            freqs.count { it > min }
         } else {
-            0 // /sys unreadable
+            0
         }
-        val threads = if (performance in 2..total) performance else (total + 1) / 2
+        // Reserve a couple of cores for the UI/system on bigger CPUs (one on small
+        // ones), but never use fewer than the performance cores. Cap at 8 — mobile
+        // matmul stops scaling beyond that.
+        val reserve = if (total >= 6) 2 else 1
+        val threads = maxOf(performance, total - reserve)
         return threads.coerceIn(2, minOf(total, 8))
     }
 
