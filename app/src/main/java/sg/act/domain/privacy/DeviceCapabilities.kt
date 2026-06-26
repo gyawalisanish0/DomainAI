@@ -25,10 +25,11 @@ class DeviceCapabilities(context: Context) {
 
     /**
      * Device-adaptive **Auto** thread count, probed **once** at startup (CPU topology
-     * is fixed). Uses most of the cores but leaves headroom (1–2) so the UI stays
-     * responsive, never below the performance-core count, **capped at 6**. On an
-     * 8-core 4+4 this yields 6; smaller CPUs scale down. The user can override this in
-     * Settings / the chat quick-panel (see [maxThreads]).
+     * is fixed). A deliberate **middle ground**: roughly **half** the cores, so
+     * generation gets a solid share of the CPU while the rest stays free for the UI
+     * and system. Bounded to `2..6`. On an 8-core phone this yields 4; smaller CPUs
+     * scale down. The user can raise it (up to [maxThreads]) in Settings / the chat
+     * quick-panel.
      */
     val recommendedThreads: Int = cpuProfile.first
 
@@ -52,18 +53,10 @@ class DeviceCapabilities(context: Context) {
             }.getOrNull()
         }
         val haveFreqs = freqs.all { it != null }
-        // Performance cores = those above the slowest (little) cluster. 0 when /sys
-        // is unreadable or the CPU is single-tier (all cores same max frequency).
-        val performance = if (haveFreqs) {
-            val min = freqs.filterNotNull().min()
-            freqs.count { it!! > min }
-        } else {
-            0
-        }
-        // Reserve a couple of cores for the UI/system on bigger CPUs (one on small
-        // ones), but never fewer than the performance cores. Cap at 6.
-        val reserve = if (total >= 6) 2 else 1
-        val threads = maxOf(performance, total - reserve).coerceIn(2, minOf(total, 6))
+        // Auto = a middle-ground count: about half the cores, so generation gets a
+        // solid share of the CPU while the rest stays free for the UI/system. Bounded
+        // to 2..6 (an 8-core phone lands on 4; the user can raise it in Settings).
+        val threads = (total / 2).coerceIn(2, minOf(total, 6))
         val sorted = if (haveFreqs) {
             (0 until total).sortedByDescending { freqs[it]!! }.toIntArray()
         } else {
