@@ -12,9 +12,9 @@ import sg.act.domain.inference.InstalledModel
 import sg.act.domain.inference.ModelCatalog
 import sg.act.domain.inference.ModelManager
 import sg.act.domain.inference.ModelSpec
-import sg.act.domain.inference.HuggingFaceClient
 import sg.act.domain.inference.OpenRouterClient
 import sg.act.domain.inference.RemoteEngine
+import sg.act.domain.inference.SpaceClient
 import sg.act.domain.privacy.DeviceCapabilities
 import sg.act.domain.privacy.PrivacyState
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -55,10 +55,15 @@ data class SettingsUiState(
     val openRouterLoading: Boolean = false,
     val openRouterError: String? = null,
     val activeModelId: String? = null,
-    // Hugging Face model picker
-    val hfModels: List<HuggingFaceClient.HfModel> = emptyList(),
-    val hfLoading: Boolean = false,
-    val hfError: String? = null,
+    // Self-hosted Space section
+    val spaceUrl: String = "",
+    val spaceToken: String = "",
+    val spaceConnecting: Boolean = false,
+    val spaceConnected: Boolean = false,
+    val spaceCatalog: List<SpaceClient.CatalogModel> = emptyList(),
+    val spaceCatalogLoading: Boolean = false,
+    val spaceLoadProgress: SpaceClient.LoadEvent? = null,
+    val spaceError: String? = null,
     // Provider validation (round-trip check before saving)
     val providerValidating: Boolean = false,
     val providerError: String? = null,
@@ -70,7 +75,7 @@ class SettingsViewModel(
     private val modelManager: ModelManager,
     deviceCapabilities: DeviceCapabilities,
     private val openRouter: OpenRouterClient = OpenRouterClient(),
-    private val hfClient: HuggingFaceClient = HuggingFaceClient(),
+    private val spaceClient: SpaceClient = SpaceClient(),
 ) : ViewModel() {
 
     private val _ui = MutableStateFlow(
@@ -138,6 +143,10 @@ class SettingsViewModel(
             activeModelId = null,
             providerError = null,
             openRouterModels = emptyList(),
+            spaceConnected = false,
+            spaceCatalog = emptyList(),
+            spaceLoadProgress = null,
+            spaceError = null,
         )
     }
 
@@ -176,33 +185,6 @@ class SettingsViewModel(
         }
     }
 
-    /** Fetch inference-ready text-generation models from Hugging Face Hub. */
-    fun fetchHuggingFaceModels(apiKey: String) = viewModelScope.launch {
-        _ui.value = _ui.value.copy(hfLoading = true, hfError = null)
-        try {
-            val models = hfClient.fetchModels(apiKey.trim().ifBlank { null })
-            _ui.value = _ui.value.copy(hfModels = models, hfLoading = false)
-        } catch (e: Exception) {
-            _ui.value = _ui.value.copy(
-                hfLoading = false,
-                hfError = e.message ?: application.getString(R.string.hf_unreachable),
-            )
-        }
-    }
-
-    /** Validate and save a chosen HF model as the active cloud provider. */
-    fun selectHuggingFaceModel(apiKey: String, model: HuggingFaceClient.HfModel) =
-        viewModelScope.launch {
-            validateAndSave(
-                RemoteEngine.Config(
-                    baseUrl = HuggingFaceClient.INFERENCE_BASE_URL,
-                    apiKey = apiKey.trim(),
-                    model = model.id,
-                    logsData = false,
-                ),
-            )
-        }
-
     /** Validate and save a chosen free OpenRouter model as the active cloud provider. */
     fun selectOpenRouterModel(apiKey: String, model: OpenRouterClient.FreeModel) =
         viewModelScope.launch {
@@ -216,6 +198,86 @@ class SettingsViewModel(
             )
         }
 
+    // -----------------------------------------------------------------------
+    // Self-hosted Space
+    // -----------------------------------------------------------------------
+
+    /** Ping the Space /health endpoint; on success auto-fetches the model catalog. */
+    fun connectSpace(url: String, token: String) = viewModelScope.launch {
+        _ui.value = _ui.value.copy(spaceConnecting = true, spaceError = null)
+        val ok = spaceClient.checkHealth(url.trim(), token.trim())
+        if (ok) {
+            _ui.value = _ui.value.copy(
+                spaceUrl = url.trim(),
+                spaceToken = token.trim(),
+                spaceConnecting = false,
+                spaceConnected = true,
+            )
+            loadSpaceCatalog()
+        } else {
+            _ui.value = _ui.value.copy(
+                spaceConnecting = false,
+                spaceError = application.getString(R.string.space_unreachable),
+            )
+        }
+    }
+
+    /** (Re-)fetch the catalog from the connected Space. */
+    fun refreshSpaceCatalog() = viewModelScope.launch { loadSpaceCatalog() }
+
+    private suspend fun loadSpaceCatalog() {
+        _ui.value = _ui.value.copy(spaceCatalogLoading = true, spaceError = null)
+        try {
+            val catalog = spaceClient.fetchCatalog(_ui.value.spaceUrl, _ui.value.spaceToken)
+            _ui.value = _ui.value.copy(spaceCatalog = catalog, spaceCatalogLoading = false)
+        } catch (e: Exception) {
+            _ui.value = _ui.value.copy(
+                spaceCatalogLoading = false,
+                spaceError = e.message ?: application.getString(R.string.space_unreachable),
+            )
+        }
+    }
+
+    /**
+     * Tell the Space to load [model]. Streams SSE progress into [spaceLoadProgress];
+     * on success validates the Space as the active cloud provider.
+     */
+    fun loadSpaceModel(model: SpaceClient.CatalogModel) = viewModelScope.launch {
+        _ui.value = _ui.value.copy(spaceError = null)
+        val url = _ui.value.spaceUrl
+        val token = _ui.value.spaceToken
+        var readyModel: String? = null
+
+        spaceClient.loadModel(url, token, model.repoId, model.filename).collect { event ->
+            when (event) {
+                is SpaceClient.LoadEvent.Ready -> {
+                    readyModel = event.model
+                    _ui.value = _ui.value.copy(spaceLoadProgress = null)
+                }
+                is SpaceClient.LoadEvent.Error -> {
+                    _ui.value = _ui.value.copy(
+                        spaceLoadProgress = null,
+                        spaceError = event.message,
+                    )
+                }
+                else -> _ui.value = _ui.value.copy(spaceLoadProgress = event)
+            }
+        }
+
+        readyModel?.let { label ->
+            validateAndSave(
+                RemoteEngine.Config(
+                    baseUrl = "$url/v1",
+                    apiKey = token,
+                    model = label,
+                    logsData = false,
+                ),
+            )
+        }
+    }
+
+    // -----------------------------------------------------------------------
+
     private fun refreshProvider() {
         _ui.value = _ui.value.copy(
             hasProvider = repository.hasCloudProvider(),
@@ -224,31 +286,26 @@ class SettingsViewModel(
     }
 
     fun downloadModel(spec: ModelSpec) {
-        // Runs on the app scope inside ModelManager, so it survives leaving Settings.
         modelManager.startDownload(spec)
     }
 
     fun importModel(uri: Uri) {
         val name = queryDisplayName(uri) ?: "imported-model.gguf"
-        // Open the stream now (cheap); ModelManager reads/closes it on the app scope.
         val input = application.contentResolver.openInputStream(uri) ?: return
         modelManager.startImport(input, name, name)
     }
 
     fun cancelDownload() = modelManager.cancelDownload()
 
-    /** Dismiss a failed download/import notice. */
     fun dismissTransfer() = modelManager.clearTransfer()
 
     fun unloadModel() = viewModelScope.launch { modelManager.unload() }
 
-    /** Toggle GPU offload; reloads the active model so the change takes effect. */
     fun setGpuEnabled(enabled: Boolean) {
         modelManager.setGpuEnabled(enabled)
         _ui.value = _ui.value.copy(gpuEnabled = enabled, benchmark = null)
     }
 
-    /** Set the context length (0 = Auto); reloads the active model to apply it. */
     fun setContextTokens(tokens: Int) {
         modelManager.setContextTokens(tokens)
         _ui.value = _ui.value.copy(
@@ -258,7 +315,6 @@ class SettingsViewModel(
         )
     }
 
-    /** Set the generation thread count (0 = Auto); reloads the active model to apply it. */
     fun setThreadCount(count: Int) {
         modelManager.setThreadCount(count)
         _ui.value = _ui.value.copy(
@@ -268,17 +324,14 @@ class SettingsViewModel(
         )
     }
 
-    /** Run the fixed-prompt speed benchmark on the loaded model. */
     fun runBenchmark() = viewModelScope.launch {
         _ui.value = _ui.value.copy(benchmarkRunning = true, benchmark = null)
         val result = runCatching { modelManager.benchmark() }.getOrNull()
         _ui.value = _ui.value.copy(benchmarkRunning = false, benchmark = result)
     }
 
-    /** Load an already-installed model and make it active. */
     fun selectModel(fileName: String) = modelManager.startSelect(fileName)
 
-    /** Delete an installed model from device storage. */
     fun deleteModel(fileName: String) = modelManager.startDelete(fileName)
 
     private fun queryDisplayName(uri: Uri): String? =

@@ -1,46 +1,70 @@
 """
 llama.cpp inference engine for the Domain AI Space backend.
 
-Wraps llama-cpp-python with:
-  - GPU layer auto-detection via a descending ladder (OOM → step down)
-  - Adaptive N_BATCH derived from server RAM (mirrors Android DeviceCapabilities)
-  - asyncio.Lock that serializes concurrent Android clients (single context,
-    not thread-safe — one request runs at a time)
-  - Non-blocking streaming via a background thread + asyncio.Queue
+Key design:
+  - /data/models persistent storage (HF Spaces mounted volume); MODELS_DIR env override.
+  - Cache-first: skips download if the GGUF already exists on disk.
+  - load_streaming(): async generator that yields SSE-ready progress dicts so the
+    Android client can show real-time download % and a "loading" phase.
+  - Descending GPU layer ladder — steps down on OOM, falls back to CPU.
+  - asyncio.Lock serialises concurrent inference requests (single llama.cpp context).
 """
 
 import asyncio
 import json
 import logging
 import os
-import time
-import uuid
 from pathlib import Path
 from typing import AsyncIterator, Optional
 
-from huggingface_hub import hf_hub_download
+import requests
+from huggingface_hub import hf_hub_url
 from llama_cpp import Llama
 
 from capabilities import recommended_batch_size, recommended_threads
 
 log = logging.getLogger(__name__)
 
-# Descending GPU-layer ladder: try maximum offload first; step down on OOM.
-# 0 = CPU-only fallback. Mirrors the Android GPU fallback strategy.
 _GPU_LADDER = [99, 32, 24, 16, 12, 8, 4, 0]
+_MODELS_DIR = Path(os.environ.get("MODELS_DIR", "/data/models"))
 
-_MODELS_DIR = Path(os.environ.get("MODELS_DIR", "/tmp/models"))
 
+# ---------------------------------------------------------------------------
+# Download helper (blocking — run in an executor)
+# ---------------------------------------------------------------------------
+
+def _download_to_file(
+    url: str,
+    target: Path,
+    token: Optional[str],
+    on_progress,  # callable(pct: int)
+) -> None:
+    """Stream-download url → target, calling on_progress(pct) per 4 MB chunk."""
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    tmp = target.with_suffix(target.suffix + ".tmp")
+    with requests.get(url, headers=headers, stream=True, timeout=(20, None)) as resp:
+        resp.raise_for_status()
+        total = int(resp.headers.get("content-length", 0))
+        received = 0
+        with open(tmp, "wb") as f:
+            for chunk in resp.iter_content(chunk_size=4 * 1024 * 1024):
+                if chunk:
+                    f.write(chunk)
+                    received += len(chunk)
+                    if total > 0:
+                        on_progress(min(99, int(received * 100 / total)))
+    tmp.rename(target)
+
+
+# ---------------------------------------------------------------------------
+# Engine
+# ---------------------------------------------------------------------------
 
 class LlamaEngine:
     def __init__(self) -> None:
         self._llama: Optional[Llama] = None
-        self._model_label: Optional[str] = None  # "repo_id/filename" for /v1/models
+        self._model_label: Optional[str] = None
         self._lock = asyncio.Lock()
-
-    # ------------------------------------------------------------------
-    # Public state
-    # ------------------------------------------------------------------
 
     @property
     def loaded(self) -> bool:
@@ -51,47 +75,79 @@ class LlamaEngine:
         return self._model_label
 
     # ------------------------------------------------------------------
-    # Model lifecycle
+    # load_streaming — yields SSE-ready dicts
     # ------------------------------------------------------------------
 
-    async def load(
+    async def load_streaming(
         self,
         repo_id: str,
         filename: str,
         hf_token: Optional[str] = None,
         n_gpu_layers: Optional[int] = None,
         n_ctx: int = 4096,
-    ) -> None:
-        """Download a GGUF file from HF Hub then load it with the best GPU tier."""
-        _MODELS_DIR.mkdir(parents=True, exist_ok=True)
+    ) -> AsyncIterator[dict]:
         loop = asyncio.get_running_loop()
+        target_dir = _MODELS_DIR / repo_id.replace("/", "--")
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target_path = target_dir / filename
 
-        log.info("Downloading %s / %s …", repo_id, filename)
-        model_path: str = await loop.run_in_executor(
-            None,
-            lambda: hf_hub_download(
-                repo_id=repo_id,
-                filename=filename,
-                token=hf_token,
-                cache_dir=str(_MODELS_DIR),
-            ),
-        )
-        log.info("Model cached at %s", model_path)
+        # ── Download phase ──────────────────────────────────────────────
+        if target_path.exists():
+            log.info("Cache hit: %s", target_path)
+            yield {"status": "cached", "pct": 100}
+        else:
+            log.info("Downloading %s / %s …", repo_id, filename)
+            queue: asyncio.Queue = asyncio.Queue()
+            last_pct = -1
+
+            def do_download() -> None:
+                try:
+                    _download_to_file(
+                        url=hf_hub_url(repo_id, filename),
+                        target=target_path,
+                        token=hf_token,
+                        on_progress=lambda pct: loop.call_soon_threadsafe(
+                            queue.put_nowait, {"status": "downloading", "pct": pct}
+                        ),
+                    )
+                    loop.call_soon_threadsafe(queue.put_nowait, {"status": "downloaded"})
+                except Exception as exc:
+                    loop.call_soon_threadsafe(
+                        queue.put_nowait, {"status": "error", "message": str(exc)}
+                    )
+
+            fut = loop.run_in_executor(None, do_download)
+
+            while True:
+                item = await queue.get()
+                if item["status"] == "downloading":
+                    pct = item["pct"]
+                    if pct != last_pct:
+                        last_pct = pct
+                        yield item
+                elif item["status"] == "downloaded":
+                    await fut
+                    break
+                else:  # error
+                    await fut
+                    yield item
+                    return
+
+        # ── Load phase ──────────────────────────────────────────────────
+        yield {"status": "loading"}
+        log.info("Loading %s into memory …", filename)
 
         n_batch = recommended_batch_size()
         n_threads = recommended_threads()
-        log.info("n_batch=%d  n_threads=%d  n_ctx=%d", n_batch, n_threads, n_ctx)
-
         ladder = [n_gpu_layers] if n_gpu_layers is not None else _GPU_LADDER
 
         llama: Optional[Llama] = None
         for gpu_layers in ladder:
             try:
-                log.info("Trying n_gpu_layers=%d …", gpu_layers)
                 llama = await loop.run_in_executor(
                     None,
                     lambda gl=gpu_layers: Llama(
-                        model_path=model_path,
+                        model_path=str(target_path),
                         n_gpu_layers=gl,
                         n_ctx=n_ctx,
                         n_batch=n_batch,
@@ -109,17 +165,29 @@ class LlamaEngine:
             except Exception as exc:
                 log.warning("n_gpu_layers=%d failed: %s", gpu_layers, exc)
                 if gpu_layers == 0:
-                    raise RuntimeError(
-                        f"Model load failed even with CPU-only (n_gpu_layers=0): {exc}"
-                    ) from exc
+                    yield {"status": "error", "message": f"Model load failed: {exc}"}
+                    return
 
         self._llama = llama
         self._model_label = f"{repo_id}/{filename}"
+        yield {"status": "ready", "model": self._model_label}
 
-    async def unload(self) -> None:
-        async with self._lock:
-            self._llama = None
-            self._model_label = None
+    # ------------------------------------------------------------------
+    # load — convenience wrapper for startup (logs but doesn't stream)
+    # ------------------------------------------------------------------
+
+    async def load(
+        self,
+        repo_id: str,
+        filename: str,
+        hf_token: Optional[str] = None,
+        n_gpu_layers: Optional[int] = None,
+        n_ctx: int = 4096,
+    ) -> None:
+        async for event in self.load_streaming(repo_id, filename, hf_token, n_gpu_layers, n_ctx):
+            log.info("Startup load: %s", event)
+            if event.get("status") == "error":
+                raise RuntimeError(event.get("message", "Load failed"))
 
     # ------------------------------------------------------------------
     # Inference
@@ -127,26 +195,19 @@ class LlamaEngine:
 
     async def stream_chat(
         self,
-        messages: list[dict],
+        messages: list,
         max_tokens: int = 512,
         temperature: float = 0.7,
         top_p: float = 0.95,
-        stop: Optional[list[str]] = None,
+        stop: Optional[list] = None,
     ) -> AsyncIterator[str]:
-        """Yield OpenAI-compatible SSE chunks, then `data: [DONE]`."""
         if self._llama is None:
             raise RuntimeError("No model loaded")
 
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue = asyncio.Queue()
-
-        kwargs = dict(
-            messages=messages,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            top_p=top_p,
-            stream=True,
-        )
+        kwargs = dict(messages=messages, max_tokens=max_tokens,
+                      temperature=temperature, top_p=top_p, stream=True)
         if stop:
             kwargs["stop"] = stop
 
@@ -174,34 +235,26 @@ class LlamaEngine:
 
     async def complete_chat(
         self,
-        messages: list[dict],
+        messages: list,
         max_tokens: int = 512,
         temperature: float = 0.7,
         top_p: float = 0.95,
-        stop: Optional[list[str]] = None,
+        stop: Optional[list] = None,
     ) -> dict:
-        """Non-streaming chat completion (blocks until the full reply is ready)."""
         if self._llama is None:
             raise RuntimeError("No model loaded")
 
         loop = asyncio.get_running_loop()
-        kwargs: dict = dict(
-            messages=messages,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            top_p=top_p,
-            stream=False,
-        )
+        kwargs: dict = dict(messages=messages, max_tokens=max_tokens,
+                            temperature=temperature, top_p=top_p, stream=False)
         if stop:
             kwargs["stop"] = stop
 
         async with self._lock:
             result = await loop.run_in_executor(
-                None,
-                lambda: self._llama.create_chat_completion(**kwargs),  # type: ignore[union-attr]
+                None, lambda: self._llama.create_chat_completion(**kwargs)  # type: ignore[union-attr]
             )
         return result  # type: ignore[return-value]
 
 
-# Module-level singleton — FastAPI app imports this directly.
 engine = LlamaEngine()

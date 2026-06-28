@@ -208,14 +208,21 @@
     <string name="openrouter_ctx">%1$dk ctx</string>
     <string name="openrouter_active">Active cloud model: %1$s</string>
 
-    <!-- Hugging Face Inference API -->
-    <string name="settings_section_huggingface">Hugging Face models</string>
-    <string name="hf_hint">Needs a Hugging Face API token. Uses the HF Serverless Inference API — prompts are not logged on paid accounts.</string>
-    <string name="hf_key_label">HF API token</string>
-    <string name="hf_fetch">Fetch models</string>
-    <string name="hf_loading">Fetching models…</string>
-    <string name="hf_empty">No models loaded yet — tap "Fetch models".</string>
-    <string name="hf_use">Use</string>
-    <string name="hf_downloads">%1$dk downloads</string>
-    <string name="hf_unreachable">Could not reach Hugging Face.</string>
+    <!-- Self-hosted Space backend -->
+    <string name="settings_section_space">Space backend</string>
+    <string name="space_hint">Connect to your self-hosted HF Docker Space running llama.cpp. Enter the Space URL and your SPACE_TOKEN to browse and load models remotely.</string>
+    <string name="space_url_label">Space URL</string>
+    <string name="space_token_label">Space token</string>
+    <string name="space_connect">Connect</string>
+    <string name="space_connecting">Connecting…</string>
+    <string name="space_refresh">Refresh catalog</string>
+    <string name="space_loading_catalog">Loading catalog…</string>
+    <string name="space_catalog_empty">No models in catalog — tap "Refresh catalog".</string>
+    <string name="space_load">Load</string>
+    <string name="space_downloading">Downloading %1$d%%</string>
+    <string name="space_loading_model">Loading into memory…</string>
+    <string name="space_cached">Cached — loading now…</string>
+    <string name="space_model_cached">Cached</string>
+    <string name="space_size">~%1$d MB</string>
+    <string name="space_unreachable">Could not reach the Space.</string>
 </resources>

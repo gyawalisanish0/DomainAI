@@ -20,7 +20,12 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY capabilities.py errors.py engine.py main.py ./
+# Persistent model storage: HF Spaces mounts /data when persistent storage is
+# enabled in Space settings. Pre-create the directory so the app starts cleanly
+# even before persistent storage is mounted (files will be in the container layer).
+RUN mkdir -p /data/models
+
+COPY capabilities.py errors.py engine.py main.py models_catalog.py ./
 
 # HF Spaces Docker spaces must expose port 7860.
 EXPOSE 7860

@@ -1,33 +1,37 @@
 """
-Domain AI — llama.cpp Space backend.
+Domain AI — llama.cpp Space backend (v0.33).
 
-Runs a llama.cpp model (via llama-cpp-python) directly inside a Hugging Face
-Docker Space and exposes an OpenAI-compatible /v1 API.  Deploy this as an HF
-Docker Space, set SPACE_TOKEN as a Space secret, then point the Domain AI
-Android app's custom endpoint at your Space URL.
+Runs a llama.cpp model inside an HF Docker Space via llama-cpp-python and exposes
+an OpenAI-compatible /v1 API.  Designed for team and community deployment:
+  - One Space instance, one SPACE_TOKEN, multiple Android clients.
+  - Models stored on HF persistent storage (/data/models); downloaded once, reused.
+  - Fork the Space for per-team or community isolation.
 
 Required Space secrets / env vars:
-  SPACE_TOKEN      — bearer token that gates all endpoints (except /health)
-  HF_TOKEN         — (optional) HF token for downloading private/gated models
-  DEFAULT_MODEL    — HF Hub repo_id to load on startup (e.g. "Qwen/Qwen2.5-0.5B-Instruct-GGUF")
-  DEFAULT_MODEL_FILE — GGUF filename within the repo (e.g. "qwen2.5-0.5b-instruct-q4_k_m.gguf")
+  SPACE_TOKEN      — bearer token gating all endpoints (except /health)
+  HF_TOKEN         — (optional) for private/gated model downloads
+  DEFAULT_MODEL    — repo_id to load on startup, e.g. "Qwen/Qwen2.5-0.5B-Instruct-GGUF"
+  DEFAULT_MODEL_FILE — GGUF filename, e.g. "qwen2.5-0.5b-instruct-q4_k_m.gguf"
 
 Optional tuning:
-  N_CTX            — context window tokens (default 4096)
-  N_GPU_LAYERS     — GPU offload layer count (default: auto from [99,32,24,16,12,8,4,0] ladder)
+  N_CTX            — context tokens (default 4096)
+  N_GPU_LAYERS     — override GPU offload (default: auto from ladder)
+  MODELS_DIR       — model cache path (default /data/models)
 """
 
+import json
 import logging
 import os
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
-from capabilities import system_info
+from capabilities import rate, system_info
 from engine import engine
 from errors import ErrorCode, api_error
+from models_catalog import CATALOG
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
@@ -56,12 +60,11 @@ async def lifespan(app: FastAPI):
                 n_gpu_layers=n_gpu,
                 n_ctx=n_ctx,
             )
-            log.info("Default model loaded: %s", engine.model_label)
+            log.info("Default model ready: %s", engine.model_label)
         except Exception as exc:
             log.error("Failed to load default model: %s", exc)
-            # Space stays up so /health still responds; callers get 503.
     else:
-        log.info("No DEFAULT_MODEL set — engine idle until a model is loaded.")
+        log.info("No DEFAULT_MODEL set — idle until /v1/admin/load is called.")
     yield
 
 
@@ -76,12 +79,12 @@ app.add_middleware(
 
 
 # ---------------------------------------------------------------------------
-# Auth helper
+# Auth
 # ---------------------------------------------------------------------------
 
 def _require_auth(request: Request) -> None:
     if not _SPACE_TOKEN:
-        return  # no token configured → open (dev/local use)
+        return  # open in dev/local mode (no token configured)
     auth = request.headers.get("Authorization", "")
     token = auth.removeprefix("Bearer ").strip()
     if token != _SPACE_TOKEN:
@@ -89,7 +92,7 @@ def _require_auth(request: Request) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Health  (no auth required — HF Spaces probes this)
+# Health  (no auth — HF Spaces probes this)
 # ---------------------------------------------------------------------------
 
 @app.get("/health")
@@ -103,6 +106,37 @@ async def health():
 
 
 # ---------------------------------------------------------------------------
+# Model catalog  /v1/catalog
+# ---------------------------------------------------------------------------
+
+@app.get("/v1/catalog")
+async def model_catalog(request: Request):
+    """
+    Returns the curated model list with suitability ratings based on this
+    Space's RAM.  Each entry includes whether the model is already cached in
+    /data/models (instant load) vs needs a download.
+    """
+    _require_auth(request)
+    from engine import _MODELS_DIR
+
+    result = []
+    for entry in CATALOG:
+        cached_path = _MODELS_DIR / entry.repo_id.replace("/", "--") / entry.filename
+        result.append({
+            "id": entry.id,
+            "name": entry.name,
+            "family": entry.family,
+            "repo_id": entry.repo_id,
+            "filename": entry.filename,
+            "min_ram_mb": entry.min_ram_mb,
+            "size_mb": entry.size_mb,
+            "suitability": rate(entry.min_ram_mb),
+            "cached": cached_path.exists(),
+        })
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Model listing  /v1/models
 # ---------------------------------------------------------------------------
 
@@ -113,25 +147,25 @@ async def list_models(request: Request):
         return {"object": "list", "data": []}
     return {
         "object": "list",
-        "data": [
-            {
-                "id": engine.model_label,
-                "object": "model",
-                "owned_by": "self",
-            }
-        ],
+        "data": [{"id": engine.model_label, "object": "model", "owned_by": "self"}],
     }
 
 
 # ---------------------------------------------------------------------------
-# Admin: load / unload model at runtime  /v1/admin/load
+# Admin: load / swap model  /v1/admin/load  (SSE)
 # ---------------------------------------------------------------------------
 
 @app.post("/v1/admin/load")
 async def load_model(request: Request):
     """
-    Load (or swap) the running model.  Body: {repo_id, filename, n_gpu_layers?, n_ctx?}
-    Requires SPACE_TOKEN auth.
+    Download and load (or reload) a GGUF model from HF Hub.
+    Streams SSE progress events:
+      {"status":"downloading","pct":42}
+      {"status":"cached","pct":100}
+      {"status":"loading"}
+      {"status":"ready","model":"<label>"}
+      {"status":"error","message":"<reason>"}
+    Then yields data: [DONE].
     """
     _require_auth(request)
     body = await request.json()
@@ -141,20 +175,24 @@ async def load_model(request: Request):
         raise api_error(400, ErrorCode.BAD_REQUEST, "'repo_id' and 'filename' are required.")
 
     n_gpu = body.get("n_gpu_layers")
-    n_ctx = int(body.get("n_ctx") or 4096)
+    n_ctx = int(body.get("n_ctx") or os.environ.get("N_CTX") or 4096)
 
-    try:
-        await engine.load(
+    async def event_stream():
+        async for event in engine.load_streaming(
             repo_id=repo_id,
             filename=filename,
             hf_token=_HF_TOKEN,
             n_gpu_layers=n_gpu,
             n_ctx=n_ctx,
-        )
-    except Exception as exc:
-        raise api_error(500, ErrorCode.MODEL_LOAD_FAILED, str(exc)) from exc
+        ):
+            yield f"data: {json.dumps(event)}\n\n"
+        yield "data: [DONE]\n\n"
 
-    return {"status": "loaded", "model": engine.model_label}
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -164,9 +202,9 @@ async def load_model(request: Request):
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request):
     """
-    OpenAI-compatible chat completion endpoint.  Supports streaming (SSE) and
-    non-streaming modes.  The running llama.cpp model is used — the `model`
-    field in the request body is accepted but ignored (one model per Space).
+    OpenAI-compatible chat completion.  Streaming (SSE) and non-streaming.
+    The `model` field in the request body is accepted but ignored — one model
+    runs per Space instance.
     """
     _require_auth(request)
 
@@ -174,7 +212,7 @@ async def chat_completions(request: Request):
         raise api_error(
             503,
             ErrorCode.NO_MODEL_LOADED,
-            "No model loaded. POST /v1/admin/load first, or set DEFAULT_MODEL.",
+            "No model loaded. Call POST /v1/admin/load first, or set DEFAULT_MODEL.",
         )
 
     body = await request.json()

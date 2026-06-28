@@ -26,6 +26,16 @@ def recommended_threads() -> int:
     return max(2, min(total // 2, 8))
 
 
+def rate(min_ram_mb: int) -> str:
+    """Classify a model against this server's RAM. Mirrors DeviceCapabilities.rate()."""
+    ram_mb = total_ram_bytes() // (1024 * 1024)
+    if ram_mb < min_ram_mb:
+        return "INSUFFICIENT"
+    if ram_mb < min_ram_mb * 1.6:
+        return "HEAVY"
+    return "RECOMMENDED"
+
+
 def system_info() -> dict:
     mem = psutil.virtual_memory()
     return {

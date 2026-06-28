@@ -64,8 +64,8 @@ import sg.act.domain.core.Diagnostics
 import sg.act.domain.inference.ModelDownloader
 import sg.act.domain.inference.ModelManager
 import sg.act.domain.inference.ModelSpec
-import sg.act.domain.inference.HuggingFaceClient
 import sg.act.domain.inference.OpenRouterClient
+import sg.act.domain.inference.SpaceClient
 import sg.act.domain.privacy.DeviceCapabilities
 import sg.act.domain.ui.components.ContextLengthRow
 import sg.act.domain.ui.components.ThreadCountRow
@@ -186,8 +186,9 @@ fun SettingsScreen(
                 state = state,
                 onFetch = viewModel::fetchOpenRouterModels,
                 onSelect = viewModel::selectOpenRouterModel,
-                onFetchHf = viewModel::fetchHuggingFaceModels,
-                onSelectHf = viewModel::selectHuggingFaceModel,
+                onConnectSpace = viewModel::connectSpace,
+                onLoadSpaceModel = viewModel::loadSpaceModel,
+                onRefreshSpaceCatalog = viewModel::refreshSpaceCatalog,
                 onSaveManual = viewModel::saveProvider,
                 onDelete = viewModel::clearProvider,
             )
@@ -257,8 +258,9 @@ private fun CloudSection(
     state: SettingsUiState,
     onFetch: (String) -> Unit,
     onSelect: (String, OpenRouterClient.FreeModel) -> Unit,
-    onFetchHf: (String) -> Unit,
-    onSelectHf: (String, HuggingFaceClient.HfModel) -> Unit,
+    onConnectSpace: (String, String) -> Unit,
+    onLoadSpaceModel: (SpaceClient.CatalogModel) -> Unit,
+    onRefreshSpaceCatalog: () -> Unit,
     onSaveManual: (String, String, String) -> Unit,
     onDelete: () -> Unit,
 ) {
@@ -289,7 +291,12 @@ private fun CloudSection(
         if (state.hasProvider) {
             ActiveProviderCard(modelId = state.activeModelId, onDelete = onDelete)
         } else {
-            HuggingFaceSection(state = state, onFetch = onFetchHf, onSelect = onSelectHf)
+            SpaceSection(
+                state = state,
+                onConnect = onConnectSpace,
+                onLoadModel = onLoadSpaceModel,
+                onRefresh = onRefreshSpaceCatalog,
+            )
             HorizontalDivider(modifier = Modifier.padding(vertical = dimensionResource(R.dimen.space_xs)))
             OpenRouterSection(state = state, onFetch = onFetch, onSelect = onSelect)
             AdvancedProviderSection(onSave = onSaveManual)
@@ -873,32 +880,41 @@ private fun OpenRouterRow(
 }
 
 // ---------------------------------------------------------------------------
-// Hugging Face section
+// Self-hosted Space section
 // ---------------------------------------------------------------------------
 
 @Composable
-private fun HuggingFaceSection(
+private fun SpaceSection(
     state: SettingsUiState,
-    onFetch: (String) -> Unit,
-    onSelect: (String, HuggingFaceClient.HfModel) -> Unit,
+    onConnect: (String, String) -> Unit,
+    onLoadModel: (SpaceClient.CatalogModel) -> Unit,
+    onRefresh: () -> Unit,
 ) {
-    var apiKey by remember { mutableStateOf("") }
+    var spaceUrl by remember { mutableStateOf("") }
+    var spaceToken by remember { mutableStateOf("") }
 
     Column(verticalArrangement = Arrangement.spacedBy(dimensionResource(R.dimen.space_s))) {
         Text(
-            stringResource(R.string.settings_section_huggingface),
+            stringResource(R.string.settings_section_space),
             style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Text(
-            stringResource(R.string.hf_hint),
+            stringResource(R.string.space_hint),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         OutlinedTextField(
-            value = apiKey,
-            onValueChange = { apiKey = it },
-            label = { Text(stringResource(R.string.hf_key_label)) },
+            value = spaceUrl,
+            onValueChange = { spaceUrl = it },
+            label = { Text(stringResource(R.string.space_url_label)) },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+        )
+        OutlinedTextField(
+            value = spaceToken,
+            onValueChange = { spaceToken = it },
+            label = { Text(stringResource(R.string.space_token_label)) },
             modifier = Modifier.fillMaxWidth(),
             singleLine = true,
             visualTransformation = PasswordVisualTransformation(),
@@ -909,49 +925,92 @@ private fun HuggingFaceSection(
             horizontalArrangement = Arrangement.spacedBy(dimensionResource(R.dimen.space_s)),
         ) {
             Button(
-                onClick = { onFetch(apiKey) },
-                enabled = apiKey.isNotBlank() && !state.hfLoading,
+                onClick = { onConnect(spaceUrl, spaceToken) },
+                enabled = spaceUrl.isNotBlank() && spaceToken.isNotBlank() && !state.spaceConnecting,
             ) {
-                Text(stringResource(R.string.hf_fetch))
+                Text(stringResource(R.string.space_connect))
             }
-            if (state.hfLoading) {
+            if (state.spaceConnecting) {
                 CircularProgressIndicator(
                     modifier = Modifier.size(dimensionResource(R.dimen.icon_progress)),
                     strokeWidth = dimensionResource(R.dimen.stroke_thin),
                 )
                 Text(
-                    stringResource(R.string.hf_loading),
+                    stringResource(R.string.space_connecting),
                     style = MaterialTheme.typography.labelMedium,
                 )
             }
         }
-        state.hfError?.let {
+        state.spaceError?.let {
             Text(it, style = MaterialTheme.typography.bodySmall, color = colorResource(R.color.brand_blocked))
         }
-        if (state.hfModels.isEmpty() && !state.hfLoading) {
-            Text(
-                stringResource(R.string.hf_empty),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        for (model in state.hfModels) {
-            HuggingFaceModelRow(
-                model = model,
-                active = model.id == state.activeModelId,
-                enabled = !state.providerValidating,
-                onUse = { onSelect(apiKey, model) },
-            )
+
+        if (state.spaceConnected) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(dimensionResource(R.dimen.space_s)),
+            ) {
+                OutlinedButton(onClick = onRefresh, enabled = !state.spaceCatalogLoading) {
+                    Text(stringResource(R.string.space_refresh))
+                }
+                if (state.spaceCatalogLoading) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(dimensionResource(R.dimen.icon_progress)),
+                        strokeWidth = dimensionResource(R.dimen.stroke_thin),
+                    )
+                    Text(
+                        stringResource(R.string.space_loading_catalog),
+                        style = MaterialTheme.typography.labelMedium,
+                    )
+                }
+            }
+
+            state.spaceLoadProgress?.let { progress ->
+                Column(verticalArrangement = Arrangement.spacedBy(dimensionResource(R.dimen.space_xs))) {
+                    if (progress is SpaceClient.LoadEvent.Downloading) {
+                        LinearProgressIndicator(
+                            progress = { progress.pct / 100f },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    } else {
+                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    }
+                    val progressText = when (progress) {
+                        is SpaceClient.LoadEvent.Downloading ->
+                            stringResource(R.string.space_downloading, progress.pct)
+                        SpaceClient.LoadEvent.Cached -> stringResource(R.string.space_cached)
+                        SpaceClient.LoadEvent.Loading -> stringResource(R.string.space_loading_model)
+                        else -> null
+                    }
+                    progressText?.let {
+                        Text(it, style = MaterialTheme.typography.labelMedium)
+                    }
+                }
+            }
+
+            if (state.spaceCatalog.isEmpty() && !state.spaceCatalogLoading) {
+                Text(
+                    stringResource(R.string.space_catalog_empty),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            for (model in state.spaceCatalog) {
+                SpaceCatalogRow(
+                    model = model,
+                    enabled = !state.providerValidating && state.spaceLoadProgress == null,
+                    onLoad = { onLoadModel(model) },
+                )
+            }
         }
     }
 }
 
 @Composable
-private fun HuggingFaceModelRow(
-    model: HuggingFaceClient.HfModel,
-    active: Boolean,
+private fun SpaceCatalogRow(
+    model: SpaceClient.CatalogModel,
     enabled: Boolean,
-    onUse: () -> Unit,
+    onLoad: () -> Unit,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -960,14 +1019,52 @@ private fun HuggingFaceModelRow(
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(model.name, style = MaterialTheme.typography.bodyMedium)
-            Text(
-                stringResource(R.string.hf_downloads, model.downloads / 1000),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(dimensionResource(R.dimen.space_xs)),
+            ) {
+                Text(
+                    model.family,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                SpaceSuitabilityChip(model.suitability)
+                if (model.cached) {
+                    Text(
+                        stringResource(R.string.space_model_cached),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = colorResource(R.color.brand_local),
+                    )
+                }
+            }
         }
-        Button(onClick = onUse, enabled = enabled && !active) {
-            Text(stringResource(R.string.hf_use))
+        Text(
+            stringResource(R.string.space_size, model.sizeMb),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Button(onClick = onLoad, enabled = enabled) {
+            Text(stringResource(R.string.space_load))
         }
     }
+}
+
+@Composable
+private fun SpaceSuitabilityChip(suitability: SpaceClient.Suitability) {
+    val (labelRes, color) = when (suitability) {
+        SpaceClient.Suitability.RECOMMENDED ->
+            R.string.suitability_recommended to colorResource(R.color.brand_local)
+        SpaceClient.Suitability.HEAVY ->
+            R.string.suitability_heavy to colorResource(R.color.brand_cloud)
+        SpaceClient.Suitability.INSUFFICIENT ->
+            R.string.suitability_insufficient to colorResource(R.color.brand_blocked)
+    }
+    AssistChip(
+        onClick = {},
+        enabled = false,
+        label = { Text(stringResource(labelRes)) },
+        colors = AssistChipDefaults.assistChipColors(
+            disabledLabelColor = color,
+        ),
+    )
 }
