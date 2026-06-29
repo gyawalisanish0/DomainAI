@@ -235,7 +235,7 @@ fun ChatScreen(
                     // we don't re-parse Markdown (and re-run syntax highlighting) on
                     // every token. It re-renders as full Markdown once it completes.
                     val streamingId = if (state.isGenerating) {
-                        messages.lastOrNull { it.role == Role.ORACLE }?.id
+                        messages.lastOrNull { it.role == Role.DOMAIN }?.id
                     } else {
                         null
                     }

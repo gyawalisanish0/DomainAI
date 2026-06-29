@@ -159,7 +159,7 @@ class ChatRepository(
         updateActive {
             it.addMessage(
                 Message(
-                    role = Role.ORACLE,
+                    role = Role.DOMAIN,
                     text = "",
                     route = outcome.route,
                     sentPayloadPreview = outcome.sentPayloadPreview,
@@ -205,7 +205,7 @@ class ChatRepository(
 
     /**
      * Strip a leading speaker-label the model sometimes emits despite the system
-     * prompt (e.g. "Domain AI:" / "Oracle:" at the very start of a reply).
+     * prompt (e.g. "Domain AI:" / "Domain:" at the very start of a reply).
      */
     private fun stripLeadingNameLabel(text: String): String =
         text.replaceFirst(
@@ -320,7 +320,7 @@ class ChatRepository(
 
     private fun summaryPrefix(summary: String?): List<Message> =
         if (summary.isNullOrBlank()) emptyList()
-        else listOf(Message(role = Role.ORACLE, text = "[Summary of earlier conversation]\n$summary"))
+        else listOf(Message(role = Role.DOMAIN, text = "[Summary of earlier conversation]\n$summary"))
 
     private suspend fun summarizeTurns(previous: String?, turns: List<Message>): String {
         val transcript = turns.joinToString("\n") {
