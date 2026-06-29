@@ -55,8 +55,8 @@ android {
         applicationId = "sg.act.domain"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
-        versionCode = 109
-        versionName = "1.09"
+        versionCode = 108
+        versionName = "1.08"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
