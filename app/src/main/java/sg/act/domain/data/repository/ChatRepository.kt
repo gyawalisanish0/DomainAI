@@ -181,7 +181,11 @@ class ChatRepository(
             )
         }
         try {
-            outcome.tokens.smoothStream().collect { fragment ->
+            val tokenStream = when (outcome.route) {
+                Route.CLOUD -> outcome.tokens.withInitialBuffer()
+                else        -> outcome.tokens.smoothStream()
+            }
+            tokenStream.collect { fragment ->
                 builder.append(fragment)
                 updateActive { it.updateLastText(stripLeadingNameLabel(builder.toString())) }
             }
@@ -386,6 +390,43 @@ class ChatRepository(
                     done -> drainMs       // fast drain after stream ends
                     !queue.isEmpty -> burstMs  // smooth a buffered burst
                     else -> 0L            // trickling stream: no added delay
+                },
+            )
+        }
+    }
+
+    /**
+     * Buffer all incoming tokens for [initialDelayMs] before emitting anything,
+     * then drain with smooth typewriter rendering.  Used for CLOUD routes so the
+     * reply bubble shows its typing indicator for a natural "thinking" period
+     * instead of text popping in the moment the first token arrives.
+     */
+    private fun Flow<String>.withInitialBuffer(
+        initialDelayMs: Long = 7_000L,
+        burstMs: Long = 18L,
+        drainMs: Long = 6L,
+    ): Flow<String> = channelFlow {
+        val queue = Channel<Char>(Channel.UNLIMITED)
+        var done = false
+        launch {
+            try {
+                collect { token -> token.forEach { queue.send(it) } }
+            } finally {
+                done = true
+                queue.close()
+            }
+        }
+        // Hold back rendering — the empty reply bubble shows its internal typing
+        // indicator during this window (text is still "", indicator is visible).
+        delay(initialDelayMs)
+        // Drain buffer + continuing stream with smooth rendering.
+        for (ch in queue) {
+            send(ch.toString())
+            delay(
+                when {
+                    done -> drainMs
+                    !queue.isEmpty -> burstMs
+                    else -> 0L
                 },
             )
         }

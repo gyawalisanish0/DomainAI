@@ -1,5 +1,5 @@
 """
-Domain AI — llama.cpp Space backend (v0.35).
+Domain AI — llama.cpp Space backend (v0.36).
 
 Runs a llama.cpp model inside an HF Docker Space via llama-cpp-python and exposes
 an OpenAI-compatible /v1 API.  Designed for team and community deployment:
@@ -19,6 +19,7 @@ Optional tuning:
   MODELS_DIR       — model cache path (default /data/models)
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -68,7 +69,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="Domain AI Backend", version="0.35", lifespan=lifespan)
+app = FastAPI(title="Domain AI Backend", version="0.36", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -198,6 +199,30 @@ async def load_model(request: Request):
 
 
 # ---------------------------------------------------------------------------
+# Heartbeat wrapper — keeps nginx / HF Spaces proxy from killing slow streams
+# ---------------------------------------------------------------------------
+
+async def _heartbeat_stream(source, interval: float = 15.0):
+    """
+    Wrap an async generator and inject SSE comment pings every `interval`
+    seconds when no token arrives.  nginx and the HF Spaces proxy treat any
+    bytes on the wire as activity, so this prevents them from aborting a
+    slow CPU-inference stream mid-reply.  SSE comment lines (': ping\\n\\n')
+    are silently ignored by OkHttp and all standard SSE parsers.
+    """
+    aiter = source.__aiter__()
+    exhausted = False
+    while not exhausted:
+        try:
+            chunk = await asyncio.wait_for(aiter.__anext__(), timeout=interval)
+            yield chunk
+        except asyncio.TimeoutError:
+            yield ": ping\n\n"
+        except StopAsyncIteration:
+            exhausted = True
+
+
+# ---------------------------------------------------------------------------
 # Chat completions  /v1/chat/completions
 # ---------------------------------------------------------------------------
 
@@ -230,12 +255,14 @@ async def chat_completions(request: Request):
 
     if stream:
         return StreamingResponse(
-            engine.stream_chat(
-                messages=messages,
-                max_tokens=max_tokens,
-                temperature=temperature,
-                top_p=top_p,
-                stop=stop,
+            _heartbeat_stream(
+                engine.stream_chat(
+                    messages=messages,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    top_p=top_p,
+                    stop=stop,
+                ),
             ),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},

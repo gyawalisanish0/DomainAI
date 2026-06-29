@@ -5,6 +5,19 @@ Versioning is independent of the Android app.
 
 ---
 
+## [0.36] — 2026-06-29
+
+### Fixed
+- **"Software caused connection abort" on long replies.** nginx / the HF Spaces
+  reverse proxy kills connections it considers idle — no bytes flowing means dead
+  connection, even if the model is actively generating. Added `_heartbeat_stream()`
+  which wraps the chat SSE generator and injects an SSE comment line
+  (`: ping\n\n`) every 15 seconds whenever no token has arrived.  nginx sees
+  activity and keeps the socket open; OkHttp and all standard SSE parsers silently
+  discard comment lines, so the Android client is unaffected.
+
+---
+
 ## [0.35] — 2026-06-29
 
 ### Fixed
