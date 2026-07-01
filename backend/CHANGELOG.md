@@ -5,6 +5,23 @@ Versioning is independent of the Android app.
 
 ---
 
+## [0.38] — 2026-07-01
+
+### Fixed
+- **`capabilities.py` read host resources instead of container limits.**
+  `os.cpu_count()` enumerates physical host cores (16 on HF free-tier hardware)
+  and `psutil.virtual_memory().total` returns host RAM (124 GB), both ignoring
+  Docker cgroup quotas. The HF free tier actually provides 2 vCPU / 16 GB.
+  Setting `n_threads=8` against a 2-core CFS quota caused heavy context-switching
+  overhead — slower than using 2 threads directly. `_cgroup_cpu_count()` now reads
+  `/sys/fs/cgroup/cpu.max` (v2) or `cpu.cfs_quota_us / cpu.cfs_period_us` (v1),
+  falling back to `os.cpu_count()` only if neither cgroup file is present.
+  `_cgroup_ram_bytes()` reads `memory.max` (v2) or `memory.limit_in_bytes` (v1)
+  so RAM-tier logic and model suitability ratings reflect the container's actual
+  allocation rather than the bare-metal host.
+
+---
+
 ## [0.37] — 2026-06-29
 
 ### Fixed

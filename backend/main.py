@@ -1,5 +1,5 @@
 """
-Domain AI — llama.cpp Space backend (v0.37).
+Domain AI — llama.cpp Space backend (v0.38).
 
 Runs a llama.cpp model inside an HF Docker Space via llama-cpp-python and exposes
 an OpenAI-compatible /v1 API.  Designed for team and community deployment:
@@ -69,7 +69,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="Domain AI Backend", version="0.37", lifespan=lifespan)
+app = FastAPI(title="Domain AI Backend", version="0.38", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
