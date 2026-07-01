@@ -5,10 +5,13 @@ import sg.act.domain.core.CrashReporting
 import sg.act.domain.core.ForegroundWork
 import sg.act.domain.data.local.AcceptanceStore
 import sg.act.domain.data.local.ConversationStore
+import sg.act.domain.data.local.ModelProfileStore
 import sg.act.domain.data.local.ModelStorage
 import sg.act.domain.data.local.ModelStore
 import sg.act.domain.data.local.RemoteConfigStore
 import sg.act.domain.data.local.SelectionStore
+import sg.act.domain.inference.ModelProfile
+import sg.act.domain.inference.ProviderType
 import sg.act.domain.data.repository.ChatRepository
 import sg.act.domain.inference.ContextSettings
 import sg.act.domain.inference.GpuGuard
@@ -55,6 +58,7 @@ class AppContainer(app: DomainApp) {
         deviceAutoThreads = deviceCapabilities.recommendedThreads,
         deviceMaxThreads = deviceCapabilities.maxThreads,
         coresBySpeed = deviceCapabilities.coresBySpeed,
+        deviceRecommendedBatchSize = deviceCapabilities.recommendedBatchSize(),
         contextSettings = ContextSettings(app),
         threadSettings = ThreadSettings(app),
         gpuGuard = GpuGuard(app),
@@ -62,16 +66,21 @@ class AppContainer(app: DomainApp) {
         sdkInt = android.os.Build.VERSION.SDK_INT,
     )
 
+    private val remoteConfigStore = RemoteConfigStore(app)
+    private val selectionStore = SelectionStore(app)
+
     val repository: ChatRepository = ChatRepository(
         context = app,
         privacySettings = PrivacySettings(app),
         conversationStore = ConversationStore(app),
-        remoteConfigStore = RemoteConfigStore(app),
-        selectionStore = SelectionStore(app),
+        remoteConfigStore = remoteConfigStore,
+        selectionStore = selectionStore,
         localEngine = LocalEngine(backendProvider = modelManager::activeBackend),
         contextTokens = modelManager::effectiveContextTokens,
         localModelLoaded = { modelManager.activeBackend() != null },
     )
+
+    val modelProfileStore = ModelProfileStore(app)
 
     val acceptanceStore = AcceptanceStore(app)
 
@@ -93,6 +102,24 @@ class AppContainer(app: DomainApp) {
         // Swipe-away from recents cancels in-flight background work. Generation on the
         // UI scope dies with the Activity; this covers a download on the app scope.
         ForegroundWork.onStopRequested = { modelManager.cancelDownload() }
+
+        // One-time migration: import a legacy single RemoteConfig into the profile store.
+        if (modelProfileStore.profiles.value.isEmpty()) {
+            remoteConfigStore.load()?.let { legacy ->
+                val type = if (legacy.baseUrl.contains("openrouter.ai")) ProviderType.OPEN_ROUTER else ProviderType.CUSTOM
+                val profile = ModelProfile(
+                    id = java.util.UUID.randomUUID().toString(),
+                    name = ModelProfile.autoName(type, legacy.model, legacy.baseUrl),
+                    type = type,
+                    baseUrl = legacy.baseUrl,
+                    apiKey = legacy.apiKey,
+                    model = legacy.model,
+                    logsData = legacy.logsData,
+                )
+                modelProfileStore.upsertProfile(profile)
+                if (selectionStore.preferCloud()) modelProfileStore.setActiveProfileId(profile.id)
+            }
+        }
 
         // Re-load the previously active on-device model, off the main thread.
         appScope.launch { modelManager.loadActiveModelIfPresent() }

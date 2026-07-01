@@ -95,7 +95,7 @@ class LLamaAndroid private constructor() {
         addAssistant: Boolean,
     ): String
     private external fun free_model(model: Long)
-    private external fun new_context(model: Long, nCtx: Int, nThreads: Int, affinityCores: IntArray): Long
+    private external fun new_context(model: Long, nCtx: Int, nThreads: Int, affinityCores: IntArray, nBatch: Int): Long
     private external fun context_size(context: Long): Int
     private external fun free_context(context: Long)
     private external fun backend_init(numa: Boolean, libDir: String?, sdkInt: Int)
@@ -131,6 +131,7 @@ class LLamaAndroid private constructor() {
         nGpuLayers: Int = 0,
         nThreads: Int = 0,
         affinityCores: IntArray = IntArray(0),
+        nBatch: Int = 512,
     ) {
         withContext(runLoop) {
             when (threadLocalState.get()) {
@@ -143,10 +144,10 @@ class LLamaAndroid private constructor() {
                         )
                     }
 
-                    val context = new_context(model, nCtx, nThreads, affinityCores)
+                    val context = new_context(model, nCtx, nThreads, affinityCores, nBatch)
                     if (context == 0L) throw IllegalStateException("new_context() failed")
 
-                    val batch = new_batch(512, 0, 1)
+                    val batch = new_batch(nBatch, 0, 1)
                     if (batch == 0L) throw IllegalStateException("new_batch() failed")
 
                     val sampler = new_sampler()

@@ -19,13 +19,17 @@ import sg.act.domain.privacy.PrivacySettings
 import sg.act.domain.privacy.PrivacyState
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
@@ -137,25 +141,30 @@ class ChatRepository(
         if (currentActive() == null) newConversation()
         val active = currentActive() ?: return
 
-        // Fit the conversation to the context window (summarize locally / truncate).
-        val history = prepareHistory(active)
-
+        // Show the user bubble immediately so the screen isn't blank while history
+        // prep (and optional summarization) runs in the background.
         val userMessage = Message(role = Role.USER, text = prompt)
-        updateActive { it.addMessage(userMessage) }
+        updateActive { it.addMessage(userMessage).retitleIfNeeded(prompt) }
+
+        // Fit the conversation to the context window (summarize locally / truncate).
+        // Uses `active` — the pre-user-message snapshot — so it's safe to add the
+        // user bubble to the UI first.
+        val history = prepareHistory(active)
 
         val privacy = privacyState.first()
         val outcome = router.answer(prompt, history, privacy, useCloudForThisTurn)
 
-        // Seed an empty reply carrying the route/preview; tokens fill it in.
+        // Seed an empty reply carrying the route/preview; the typing indicator inside
+        // AssistantContent shows while the first token is on its way.
         updateActive {
             it.addMessage(
                 Message(
-                    role = Role.ORACLE,
+                    role = Role.DOMAIN,
                     text = "",
                     route = outcome.route,
                     sentPayloadPreview = outcome.sentPayloadPreview,
                 ),
-            ).retitleIfNeeded(prompt)
+            )
         }
 
         val builder = StringBuilder()
@@ -172,8 +181,12 @@ class ChatRepository(
             )
         }
         try {
-            outcome.tokens.collect { delta ->
-                builder.append(delta)
+            val tokenStream = when (outcome.route) {
+                Route.CLOUD -> outcome.tokens.withInitialBuffer()
+                else        -> outcome.tokens.smoothStream()
+            }
+            tokenStream.collect { fragment ->
+                builder.append(fragment)
                 updateActive { it.updateLastText(stripLeadingNameLabel(builder.toString())) }
             }
         } catch (e: CancellationException) {
@@ -196,7 +209,7 @@ class ChatRepository(
 
     /**
      * Strip a leading speaker-label the model sometimes emits despite the system
-     * prompt (e.g. "Domain AI:" / "Oracle:" at the very start of a reply).
+     * prompt (e.g. "Domain AI:" / "Domain:" at the very start of a reply).
      */
     private fun stripLeadingNameLabel(text: String): String =
         text.replaceFirst(
@@ -311,7 +324,7 @@ class ChatRepository(
 
     private fun summaryPrefix(summary: String?): List<Message> =
         if (summary.isNullOrBlank()) emptyList()
-        else listOf(Message(role = Role.ORACLE, text = "[Summary of earlier conversation]\n$summary"))
+        else listOf(Message(role = Role.DOMAIN, text = "[Summary of earlier conversation]\n$summary"))
 
     private suspend fun summarizeTurns(previous: String?, turns: List<Message>): String {
         val transcript = turns.joinToString("\n") {
@@ -345,6 +358,78 @@ class ChatRepository(
         if (!restored) return
         // Never persist empty drafts, so abandoned "New chat"s don't accumulate.
         conversationStore.save(_conversations.value.filter { it.messages.isNotEmpty() })
+    }
+
+    /**
+     * Smooth typewriter rendering for any token stream:
+     * - When the char queue is empty (stream is trickling — local / slow server):
+     *   no added delay; chars appear as fast as they arrive.
+     * - When the queue has buffered chars (burst from cloud API): drain at
+     *   [burstMs] per char so bursts render smoothly rather than all at once.
+     * - After the upstream flow completes: drain any remaining buffer at
+     *   [drainMs] per char so the last paragraph isn't held up.
+     */
+    private fun Flow<String>.smoothStream(
+        burstMs: Long = 18L,
+        drainMs: Long = 6L,
+    ): Flow<String> = channelFlow {
+        val queue = Channel<Char>(Channel.UNLIMITED)
+        var done = false
+        launch {
+            try {
+                collect { token -> token.forEach { queue.send(it) } }
+            } finally {
+                done = true
+                queue.close()
+            }
+        }
+        for (ch in queue) {
+            send(ch.toString())
+            delay(
+                when {
+                    done -> drainMs       // fast drain after stream ends
+                    !queue.isEmpty -> burstMs  // smooth a buffered burst
+                    else -> 0L            // trickling stream: no added delay
+                },
+            )
+        }
+    }
+
+    /**
+     * Buffer all incoming tokens for [initialDelayMs] before emitting anything,
+     * then drain with smooth typewriter rendering.  Used for CLOUD routes so the
+     * reply bubble shows its typing indicator for a natural "thinking" period
+     * instead of text popping in the moment the first token arrives.
+     */
+    private fun Flow<String>.withInitialBuffer(
+        initialDelayMs: Long = 7_000L,
+        burstMs: Long = 18L,
+        drainMs: Long = 6L,
+    ): Flow<String> = channelFlow {
+        val queue = Channel<Char>(Channel.UNLIMITED)
+        var done = false
+        launch {
+            try {
+                collect { token -> token.forEach { queue.send(it) } }
+            } finally {
+                done = true
+                queue.close()
+            }
+        }
+        // Hold back rendering — the empty reply bubble shows its internal typing
+        // indicator during this window (text is still "", indicator is visible).
+        delay(initialDelayMs)
+        // Drain buffer + continuing stream with smooth rendering.
+        for (ch in queue) {
+            send(ch.toString())
+            delay(
+                when {
+                    done -> drainMs
+                    !queue.isEmpty -> burstMs
+                    else -> 0L
+                },
+            )
+        }
     }
 
     private fun Conversation.addMessage(message: Message) = copy(

@@ -3,10 +3,12 @@ package sg.act.domain.ui.chat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import sg.act.domain.data.local.ModelProfileStore
 import sg.act.domain.data.model.Conversation
 import sg.act.domain.data.repository.ChatRepository
 import sg.act.domain.inference.InstalledModel
 import sg.act.domain.inference.ModelManager
+import sg.act.domain.inference.ModelProfile
 import sg.act.domain.privacy.PrivacyState
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -30,8 +32,8 @@ data class ChatUiState(
     val transfer: ModelManager.TransferState = ModelManager.TransferState.Idle,
     // Model selection (for the chat-screen picker + subtitle).
     val installed: List<InstalledModel> = emptyList(),
-    val preferCloud: Boolean = false,
-    val cloudModelId: String? = null,
+    val savedProfiles: List<ModelProfile> = emptyList(),
+    val activeProfileId: String? = null,
     // Inference quick-panel: GPU offload + context length (0 = Auto).
     val gpuEnabled: Boolean = true,
     val contextTokens: Int = 0,
@@ -45,6 +47,7 @@ data class ChatUiState(
 class ChatViewModel(
     private val repository: ChatRepository,
     private val modelManager: ModelManager,
+    private val profileStore: ModelProfileStore,
 ) : ViewModel() {
 
     private val _ui = MutableStateFlow(ChatUiState())
@@ -83,10 +86,10 @@ class ChatViewModel(
         combine(
             core,
             modelManager.installed,
-            repository.preferCloud,
-            repository.cloudModelId,
+            profileStore.profiles,
+            profileStore.activeProfileId,
             modelManager.transfer,
-        ) { s, installed, preferCloud, cloudModelId, transfer ->
+        ) { s, installed, profiles, activeProfileId, transfer ->
             _ui.value.copy(
                 conversation = s.conversation,
                 conversations = s.conversations,
@@ -94,8 +97,8 @@ class ChatViewModel(
                 privacy = s.privacy,
                 modelState = s.modelState,
                 installed = installed,
-                preferCloud = preferCloud,
-                cloudModelId = cloudModelId,
+                savedProfiles = profiles,
+                activeProfileId = activeProfileId,
                 transfer = transfer,
             )
         }.onEach { _ui.value = it }.launchIn(viewModelScope)
@@ -104,11 +107,14 @@ class ChatViewModel(
     /** Pick an on-device model: load it and route chats locally. */
     fun selectLocalModel(fileName: String) {
         modelManager.startSelect(fileName)
+        profileStore.setActiveProfileId(null)
         repository.setPreferCloud(false)
     }
 
-    /** Pick the configured cloud model: route chats to it (subject to consent). */
-    fun selectCloudModel() {
+    /** Switch to a saved cloud profile: update the active remote config and route to cloud. */
+    fun switchToProfile(profile: ModelProfile) = viewModelScope.launch {
+        repository.saveRemoteConfig(profile.toRemoteConfig())
+        profileStore.setActiveProfileId(profile.id)
         repository.setPreferCloud(true)
     }
 
@@ -153,7 +159,7 @@ class ChatViewModel(
         // Route to the cloud only when a cloud model is the picked model. When it's
         // picked but currently blocked (kill switch / no consent), still request
         // cloud so the router answers locally *with a note* explaining why.
-        val requestCloud = _ui.value.preferCloud && _ui.value.cloudModelId != null
+        val requestCloud = _ui.value.activeProfileId != null
         dispatch(text, useCloud = requestCloud)
     }
 
@@ -196,9 +202,10 @@ class ChatViewModel(
     class Factory(
         private val repository: ChatRepository,
         private val modelManager: ModelManager,
+        private val profileStore: ModelProfileStore,
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T =
-            ChatViewModel(repository, modelManager) as T
+            ChatViewModel(repository, modelManager, profileStore) as T
     }
 }

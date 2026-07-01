@@ -193,7 +193,7 @@ Java_sg_act_domain_llama_LLamaAndroid_free_1model(JNIEnv *, jobject, jlong model
 }
 
 JNIEXPORT jlong JNICALL
-Java_sg_act_domain_llama_LLamaAndroid_new_1context(JNIEnv *env, jobject, jlong jmodel, jint n_ctx_requested, jint n_threads_requested, jintArray jaffinity) {
+Java_sg_act_domain_llama_LLamaAndroid_new_1context(JNIEnv *env, jobject, jlong jmodel, jint n_ctx_requested, jint n_threads_requested, jintArray jaffinity, jint n_batch_requested) {
     auto *model = reinterpret_cast<llama_model *>(jmodel);
     if (model == nullptr) return 0;
 
@@ -203,10 +203,12 @@ Java_sg_act_domain_llama_LLamaAndroid_new_1context(JNIEnv *env, jobject, jlong j
     const int trained = llama_model_n_ctx_train(model);
     if (trained > 0 && n_ctx > trained) n_ctx = trained;
 
+    const int n_batch = n_batch_requested > 0 ? n_batch_requested : N_BATCH;
+
     llama_context_params params = llama_context_default_params();
     params.n_ctx = n_ctx;
-    params.n_batch = N_BATCH;
-    params.n_ubatch = N_BATCH;
+    params.n_batch = n_batch;
+    params.n_ubatch = n_batch;
     // Thread count is chosen on the Kotlin side from the device's CPU (see
     // DeviceCapabilities.recommendedThreads). Fall back to 4 if unset.
     const int threads = n_threads_requested > 0 ? n_threads_requested : 4;
@@ -340,10 +342,11 @@ Java_sg_act_domain_llama_LLamaAndroid_completion_1init(
     // Each send re-decodes a fresh prompt, so start from an empty KV cache.
     llama_memory_clear(llama_get_memory(ctx), true);
 
-    // Decode in batches of at most N_BATCH so prompts larger than the batch can't
-    // overflow the fixed-size batch arrays. Only the very last token needs logits.
-    for (int i = 0; i < n_tokens; i += N_BATCH) {
-        const int chunk = std::min(N_BATCH, n_tokens - i);
+    // Decode in batches using the size baked into the context (set from device RAM
+    // on load). Reads it back via llama_n_batch so completion_init needs no extra param.
+    const int n_batch = llama_n_batch(ctx);
+    for (int i = 0; i < n_tokens; i += n_batch) {
+        const int chunk = std::min(n_batch, n_tokens - i);
         batch->n_tokens = 0;
         for (int j = 0; j < chunk; j++) {
             batch_add(*batch, tokens[i + j], i + j, false);

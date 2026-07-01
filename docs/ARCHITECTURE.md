@@ -23,8 +23,12 @@ sg.act.domain
 ├── inference/
 │   ├── InferenceEngine           Common contract for local & remote.
 │   ├── LocalEngine               On-device (default); GGUF/llama.cpp hook.
-│   ├── RemoteEngine              Opt-in OpenAI-compatible client.
-│   └── PrivacyRouter             The policy core.
+│   ├── RemoteEngine              Opt-in OpenAI-compatible client (used for all cloud).
+│   ├── PrivacyRouter             The policy core.
+│   ├── ModelManager              Lifecycle: download / import / load / unload / benchmark.
+│   ├── ModelCatalog              Curated on-device GGUF list with RAM requirements.
+│   ├── SpaceClient               Self-hosted Space: /health, /v1/catalog, /v1/admin/load SSE.
+│   └── OpenRouterClient          Free OpenRouter model listing.
 └── privacy/
     ├── PrivacyState              Pure config (kill switch, consent, redaction).
     ├── PrivacySettings           DataStore-backed persistence of PrivacyState.
@@ -94,3 +98,42 @@ llama/
 route/redaction synchronously and returns a `StreamingOutcome` carrying the token
 flow; `ChatRepository` seeds an empty reply and appends deltas as they arrive, so
 the UI streams live off the existing `conversation` StateFlow.
+
+## Cloud providers
+
+All cloud providers are routed through `RemoteEngine`, which speaks
+OpenAI-compatible `/v1/chat/completions`. The three provider paths that write into
+`RemoteEngine.Config` are:
+
+| Provider | Entry point | Notes |
+|----------|-------------|-------|
+| **Self-hosted Space** | `SpaceClient` + `SettingsViewModel.connectSpace` / `loadSpaceModel` | Pings `/health`, fetches `/v1/catalog`, streams SSE load progress from `/v1/admin/load`, then calls `validateAndSave` |
+| **OpenRouter** | `OpenRouterClient` + `SettingsViewModel.fetchOpenRouterModels` / `selectOpenRouterModel` | Fetches warm free models from the OpenRouter catalog; sets `logsData` per-model |
+| **Custom endpoint** | `SettingsViewModel.saveProvider` | Direct form entry; any OpenAI-compatible URL |
+
+`validateAndSave` always does a real round-trip (`ChatRepository.validateProvider`)
+before persisting credentials — the config is never saved if the server doesn't
+respond correctly. The stored API key is encrypted via `EncryptedSharedPreferences`
+and is never read back into the UI.
+
+### SpaceClient SSE flow
+
+```
+Android                         Space
+  │  POST /v1/admin/load         │
+  │ ──────────────────────────►  │  download model (if not cached)
+  │ ◄── {"status":"downloading","pct":N} ──
+  │ ◄── {"status":"cached","pct":100}  ──  (if already on disk)
+  │ ◄── {"status":"loading"}     │  load into llama.cpp context
+  │ ◄── {"status":"ready","model":"…"} ─
+  │ ◄── data: [DONE]             │
+  │                              │
+  │  validateAndSave(config)     │  round-trip /v1/chat/completions
+  │ ──────────────────────────►  │
+  │ ◄── streaming reply          │
+  │  persist encrypted config    │
+```
+
+`SpaceClient.loadModel` is a `Flow<LoadEvent>` running on `Dispatchers.IO`; the
+ViewModel collects it and updates `spaceLoadProgress` in the UI state for each
+event. On `Ready`, it extracts the model label and calls `validateAndSave`.
