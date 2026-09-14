@@ -5,6 +5,24 @@ All notable changes to Domain AI are documented here. This project adheres to
 
 ## [1.11] — 2026-09-14
 
+### Performance
+- **Faster on-device inference on every modern phone.** The native engine was being
+  cross-compiled for baseline `armv8-a`, which left ggml's accelerated integer kernels
+  out of the build entirely — they are guarded on the compiler's dot-product feature
+  macro, and nothing was asking for it. The build now targets
+  `armv8.2-a+dotprod+fp16`, which switches those kernels on for quantized matmul —
+  most of the work in both prompt prefill and token generation. The llamafile/tinyBLAS
+  `sgemm` kernels are enabled alongside it (they gate on the same feature, so the two
+  compound).
+
+### Changed
+- **On-device models now require an ARMv8.2 CPU** with dot-product support — every
+  arm64 chip from roughly 2017 on (Snapdragon 845+, Exynos 9xxx, Dimensity, Tensor).
+  A few early arm64 parts lack it, notably the Snapdragon 835 and Exynos 8895. Rather
+  than crash on an unsupported instruction part-way through a reply, the app checks the
+  CPU before loading the engine and explains the situation; the offline responder and
+  cloud models are unaffected.
+
 ### Added
 - **Regenerate a reply.** Every finished reply carries a regenerate control: the answer
   is discarded and the same question is asked again. Routing is decided afresh, so

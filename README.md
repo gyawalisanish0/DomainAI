@@ -73,6 +73,13 @@ have a fully private cloud backend — your model, your Space, your data.
 - a GGUF model (download in-app from Settings → On-device model, or import your own), or
 - a cloud provider configured in Settings → Cloud (self-hosted Space, OpenRouter, or a custom OpenAI-compatible endpoint).
 
+**On-device inference additionally needs an ARMv8.2 CPU with dot-product support**
+(`asimddp`) — every arm64 chip from roughly 2017 on, i.e. Snapdragon 845 and later,
+Exynos 9xxx, Dimensity, Tensor. The inference engine is compiled against those
+instructions because they are worth a large share of its speed. A few early arm64
+parts lack them, notably the Snapdragon 835 and Exynos 8895; on those the app detects
+it up front and says so, and cloud models still work normally.
+
 ## Install
 
 Grab the signed APK from the
