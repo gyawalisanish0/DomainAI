@@ -17,7 +17,7 @@ sg.act.domain
 │   ├── settings/                 SettingsScreen + SettingsViewModel.
 │   └── components/               Reusable, resource-driven composables.
 ├── data/
-│   ├── model/                    Message, Conversation, Role, Route.
+│   ├── model/                    Message, Conversation, Role, Route + rewind rules.
 │   ├── repository/ChatRepository Single source of truth; orchestrates routing.
 │   └── local/                    Encrypted persistence (conversations + config).
 ├── inference/
@@ -48,6 +48,26 @@ sg.act.domain
 4. The reply (with its `Route` and, for cloud, the exact redacted text that was
    sent) is appended and the conversation is persisted encrypted.
 
+## Redoing a turn (regenerate / edit & resend)
+
+Both actions are the same move: **rewind, then send again**. `ConversationRewind`
+trims the conversation back to just before a user turn and hands back that turn's
+prompt; `ChatRepository` then calls the ordinary `send` with it. There is no second
+generation path, so a redone turn is routed, redacted, history-budgeted and
+persisted exactly like a fresh message — including re-deciding local-vs-cloud under
+whatever settings are in force now.
+
+Trimming is pure (`Conversation` in, `Conversation` out — no Android, no
+coroutines), which is what makes the fiddly parts JVM-testable: clamping
+`summarizedCount` so the rolling summary can't claim messages that no longer exist,
+dropping the summary when the chat is emptied, and releasing a chat's title back to
+`DEFAULT_TITLE` so a reworded opening question renames it.
+
+The view model owns a single generation slot: `send`, `regenerate` and
+`editAndResend` all claim it through one guard, and the UI only offers the actions
+between generations — regenerate on the newest reply only, since regenerating an
+older one would silently discard everything said after it.
+
 ## Why a separate `PrivacyState`
 
 `PrivacyState` is a pure data class with no Android dependencies, so the router
@@ -56,9 +76,10 @@ and guard logic that consume it are unit-testable on the JVM. `PrivacySettings`
 
 ## Testability
 
-`PrivacyRouter`, `NetworkGuard`, and `PiiRedactor` are pure Kotlin and covered by
-JVM unit tests. Engines are injected behind the `InferenceEngine` interface, so
-tests use fakes and never need a model or a network.
+`PrivacyRouter`, `NetworkGuard`, `PiiRedactor` and the `ConversationRewind` rules
+are pure Kotlin and covered by JVM unit tests. Engines are injected behind the
+`InferenceEngine` interface, so tests use fakes and never need a model or a
+network.
 
 ## The on-device engine (`:llama` native module)
 

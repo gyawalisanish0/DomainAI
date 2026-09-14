@@ -9,6 +9,8 @@ import sg.act.domain.data.model.Conversation
 import sg.act.domain.data.model.Message
 import sg.act.domain.data.model.Role
 import sg.act.domain.data.model.Route
+import sg.act.domain.data.model.rewindToLastUserTurn
+import sg.act.domain.data.model.rewindToUserMessage
 import sg.act.domain.inference.InferenceEngine
 import sg.act.domain.inference.LocalEngine
 import sg.act.domain.inference.PrivacyRouter
@@ -195,6 +197,32 @@ class ChatRepository(
     }
 
     /**
+     * Re-answer the most recent question: the reply it produced is discarded and
+     * the same prompt goes back through [send], so the new answer is routed,
+     * redacted and budgeted under the settings in force right now (a different
+     * model, say, or a context length that has since changed). A no-op in a chat
+     * with no question to replay.
+     */
+    suspend fun regenerate(useCloudForThisTurn: Boolean) {
+        val rewind = currentActive()?.rewindToLastUserTurn() ?: return
+        updateActive { rewind.conversation }
+        send(rewind.prompt, useCloudForThisTurn)
+    }
+
+    /**
+     * Reword an earlier question and take the conversation from there: that turn
+     * and every turn after it is discarded, then [newText] is sent in its place.
+     * A no-op when the message is gone or the replacement text is blank.
+     */
+    suspend fun editAndResend(messageId: String, newText: String, useCloudForThisTurn: Boolean) {
+        val prompt = newText.trim()
+        if (prompt.isEmpty()) return
+        val rewind = currentActive()?.rewindToUserMessage(messageId) ?: return
+        updateActive { rewind.conversation }
+        send(prompt, useCloudForThisTurn)
+    }
+
+    /**
      * Strip a leading speaker-label the model sometimes emits despite the system
      * prompt (e.g. "Domain AI:" / "Oracle:" at the very start of a reply).
      */
@@ -361,7 +389,7 @@ class ChatRepository(
     }
 
     private fun Conversation.retitleIfNeeded(firstPrompt: String) =
-        if (title == "New chat" && firstPrompt.isNotBlank()) {
+        if (title == Conversation.DEFAULT_TITLE && firstPrompt.isNotBlank()) {
             copy(title = firstPrompt.take(40))
         } else {
             this

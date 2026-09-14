@@ -18,6 +18,14 @@
     <string name="action_stop">Stop</string>
     <string name="action_copy">Copy</string>
     <string name="action_back">Back</string>
+    <string name="action_regenerate">Regenerate reply</string>
+    <string name="action_edit">Edit and resend</string>
+    <string name="edit_message_title">Edit message</string>
+    <string name="edit_message_send">Resend</string>
+    <plurals name="edit_message_discards">
+        <item quantity="one">Resending replaces the %1$d message after this one.</item>
+        <item quantity="other">Resending replaces the %1$d messages after this one.</item>
+    </plurals>
     <string name="empty_title">Ask Domain AI anything</string>
     <string name="empty_body">Every reply is generated on your device. Nothing leaves the phone unless you turn on cloud mode and approve what gets sent.</string>
     <string name="input_hint_local">Message Domain AI…</string>

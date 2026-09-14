@@ -148,22 +148,53 @@ class ChatViewModel(
      */
     fun onSend() {
         val text = _ui.value.input.trim()
-        if (text.isEmpty() || _ui.value.isGenerating) return
+        if (text.isEmpty()) return
+        if (!beginGenerating()) return
+        // The draft has been taken; clear the composer so it's ready for the next one.
+        _ui.value = _ui.value.copy(input = "")
+        dispatch { repository.send(text, requestCloud()) }
+    }
 
-        // Route to the cloud only when a cloud model is the picked model. When it's
-        // picked but currently blocked (kill switch / no consent), still request
-        // cloud so the router answers locally *with a note* explaining why.
-        val requestCloud = _ui.value.preferCloud && _ui.value.cloudModelId != null
-        dispatch(text, useCloud = requestCloud)
+    /**
+     * Ask the same question again and replace the answer. Routing is decided
+     * afresh, so a regenerate after switching model or settings uses the new ones.
+     */
+    fun regenerate() {
+        if (!beginGenerating()) return
+        dispatch { repository.regenerate(requestCloud()) }
+    }
+
+    /**
+     * Replace an earlier question with [text] and answer it again, discarding the
+     * turns that followed. The composer's draft is left untouched.
+     */
+    fun editAndResend(messageId: String, text: String) {
+        if (text.isBlank()) return
+        if (!beginGenerating()) return
+        dispatch { repository.editAndResend(messageId, text, requestCloud()) }
+    }
+
+    /**
+     * Route to the cloud only when a cloud model is the picked model. When it's
+     * picked but currently blocked (kill switch / no consent), still request cloud
+     * so the router answers locally *with a note* explaining why.
+     */
+    private fun requestCloud(): Boolean =
+        _ui.value.preferCloud && _ui.value.cloudModelId != null
+
+    /** Claim the single generation slot, or return false if one is already running. */
+    private fun beginGenerating(): Boolean {
+        if (_ui.value.isGenerating) return false
+        _ui.value = _ui.value.copy(isGenerating = true)
+        return true
     }
 
     private var generationJob: Job? = null
 
-    private fun dispatch(text: String, useCloud: Boolean) {
-        _ui.value = _ui.value.copy(input = "", isGenerating = true)
+    private fun dispatch(work: suspend () -> Unit) {
         generationJob = viewModelScope.launch {
             try {
-                repository.send(text, useCloud)
+                work()
             } catch (_: CancellationException) {
                 // User stopped generation; partial reply was already persisted.
             } finally {

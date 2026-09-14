@@ -3,6 +3,28 @@
 All notable changes to Domain AI are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- **Regenerate a reply.** Every finished reply carries a regenerate control: the answer
+  is discarded and the same question is asked again. Routing is decided afresh, so
+  regenerating after switching model, context length or threads uses the new settings —
+  useful when an on-device answer came out truncated, repetitive or simply wrong.
+- **Edit and resend a question.** Any of your messages can be reworded and asked again.
+  The conversation continues from that turn, so the answers that followed are replaced;
+  the dialog says how many messages that is before you confirm. Editing the opening
+  question also frees the chat's title to follow the new wording.
+- Your own messages now have a copy control too, alongside edit.
+
+### Internal
+- Both new actions rewind the conversation and then go back through the ordinary send
+  path, so routing, redaction, history budgeting and encrypted persistence behave
+  identically to a fresh message. The rewind rules (what is dropped, what the rolling
+  summary may still claim, when a chat's title is released) are pure functions on the
+  model, covered by JVM unit tests.
+- The "one generation at a time" guard moved into the view model, shared by send,
+  regenerate and resend instead of being re-checked per entry point.
+
 ## [1.05] — 2026-06-25
 
 ### Added

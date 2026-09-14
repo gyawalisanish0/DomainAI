@@ -22,6 +22,7 @@ strips sensitive information before anything is sent.
 - **Network kill switch** — outbound requests made impossible at one auditable chokepoint; on by default.
 - **PII redaction** — emails, phones, SSNs, cards and IPs stripped before any cloud call; each cloud reply shows the exact redacted text that was sent.
 - **Routing transparency** — every reply badged *On-device*, *Cloud*, or *Blocked*.
+- **Redo a turn** — regenerate any reply, or reword a question and ask it again; the redone turn is routed and redacted under the settings in force then.
 - **Encrypted at rest** — AES-256 history keyed by the Android Keystore; backups off; no analytics or trackers.
 - **GPU acceleration** with an in-app CPU-vs-GPU benchmark, and a **configurable context window**.
 

@@ -23,9 +23,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Smartphone
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -109,11 +111,19 @@ fun RoutingBadge(route: Route, modifier: Modifier = Modifier) {
     }
 }
 
+/**
+ * One chat message, with the actions that apply to it. [onRegenerate] (assistant
+ * replies) and [onEdit] (user messages) are null when the action doesn't apply
+ * here — an older reply, or a generation already in flight — and the affordance
+ * is then left off entirely rather than shown disabled.
+ */
 @Composable
 fun MessageBubble(
     message: Message,
     modifier: Modifier = Modifier,
     streaming: Boolean = false,
+    onRegenerate: (() -> Unit)? = null,
+    onEdit: (() -> Unit)? = null,
 ) {
     val isUser = message.role == Role.USER
     val bubbleColor =
@@ -161,22 +171,40 @@ fun MessageBubble(
                 )
             }
         }
-        if (!isUser) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(dimensionResource(R.dimen.space_s)),
-                modifier = Modifier.padding(top = dimensionResource(R.dimen.space_xs)),
-            ) {
+        if (isUser) {
+            // Only rendered while the turn is actionable, so bubbles stay clean
+            // during generation.
+            if (onEdit != null) {
+                MessageActions {
+                    if (message.text.isNotBlank()) {
+                        MessageActionIcon(
+                            icon = Icons.Filled.ContentCopy,
+                            label = stringResource(R.string.action_copy),
+                            onClick = { clipboard.setText(AnnotatedString(message.text)) },
+                        )
+                    }
+                    MessageActionIcon(
+                        icon = Icons.Filled.Edit,
+                        label = stringResource(R.string.action_edit),
+                        onClick = onEdit,
+                    )
+                }
+            }
+        } else {
+            MessageActions {
                 RoutingBadge(route = message.route)
                 if (message.text.isNotBlank()) {
-                    Icon(
-                        imageVector = Icons.Filled.ContentCopy,
-                        contentDescription = stringResource(R.string.action_copy),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier
-                            .clickable { clipboard.setText(AnnotatedString(message.text)) }
-                            .padding(dimensionResource(R.dimen.space_xxs))
-                            .size(dimensionResource(R.dimen.icon_small)),
+                    MessageActionIcon(
+                        icon = Icons.Filled.ContentCopy,
+                        label = stringResource(R.string.action_copy),
+                        onClick = { clipboard.setText(AnnotatedString(message.text)) },
+                    )
+                }
+                if (onRegenerate != null) {
+                    MessageActionIcon(
+                        icon = Icons.Filled.Refresh,
+                        label = stringResource(R.string.action_regenerate),
+                        onClick = onRegenerate,
                     )
                 }
             }
@@ -192,6 +220,39 @@ fun MessageBubble(
             }
         }
     }
+}
+
+/** The row of small controls under a bubble (routing badge, copy, edit, regenerate). */
+@Composable
+private fun MessageActions(content: @Composable () -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(dimensionResource(R.dimen.space_s)),
+        modifier = Modifier.padding(top = dimensionResource(R.dimen.space_xs)),
+    ) {
+        content()
+    }
+}
+
+/**
+ * One icon in a [MessageActions] row. The touch target is padded out beyond the
+ * drawn glyph so these stay tappable at their deliberately small size.
+ */
+@Composable
+private fun MessageActionIcon(
+    icon: ImageVector,
+    label: String,
+    onClick: () -> Unit,
+) {
+    Icon(
+        imageVector = icon,
+        contentDescription = label,
+        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier
+            .clickable(onClick = onClick)
+            .padding(dimensionResource(R.dimen.space_xs))
+            .size(dimensionResource(R.dimen.icon_small)),
+    )
 }
 
 /**

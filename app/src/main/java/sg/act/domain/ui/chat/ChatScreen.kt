@@ -62,6 +62,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.res.dimensionResource
 import androidx.compose.ui.res.integerResource
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.launch
@@ -70,6 +71,7 @@ import sg.act.domain.data.local.ModelSource
 import sg.act.domain.data.model.Conversation
 import sg.act.domain.data.model.Message
 import sg.act.domain.data.model.Role
+import sg.act.domain.data.model.messagesAfter
 import sg.act.domain.inference.InstalledModel
 import sg.act.domain.inference.ModelManager
 import sg.act.domain.ui.components.ContextLengthRow
@@ -94,6 +96,9 @@ fun ChatScreen(
     val messages = state.conversation.messages
     val lastIndex = messages.lastIndex
     val lastLength = messages.lastOrNull()?.text?.length ?: 0
+    // The one reply a regenerate would replace: the final message, when it is a
+    // reply at all (a send that failed outright can leave a question last).
+    val replaceableReplyId = messages.lastOrNull()?.takeIf { it.role != Role.USER }?.id
     var prevIndex by remember { mutableStateOf(-1) }
     LaunchedEffect(lastIndex, lastLength) {
         if (lastIndex < 0) return@LaunchedEffect
@@ -111,6 +116,7 @@ fun ChatScreen(
     val scope = rememberCoroutineScope()
     var renaming by remember { mutableStateOf<Conversation?>(null) }
     var deleting by remember { mutableStateOf<Conversation?>(null) }
+    var editing by remember { mutableStateOf<Message?>(null) }
     var showModelPicker by remember { mutableStateOf(false) }
     var showInferencePanel by remember { mutableStateOf(false) }
 
@@ -147,6 +153,14 @@ fun ChatScreen(
             title = convo.title,
             onConfirm = { viewModel.deleteConversation(convo.id); deleting = null },
             onCancel = { deleting = null },
+        )
+    }
+    editing?.let { message ->
+        EditMessageDialog(
+            initial = message.text,
+            discarded = state.conversation.messagesAfter(message.id),
+            onConfirm = { text -> viewModel.editAndResend(message.id, text); editing = null },
+            onCancel = { editing = null },
         )
     }
 
@@ -235,7 +249,27 @@ fun ChatScreen(
                         contentPadding = PaddingValues(vertical = gap),
                     ) {
                         items(messages, key = Message::id) { message ->
-                            MessageBubble(message, streaming = message.id == streamingId)
+                            // Turn-level actions are offered only between
+                            // generations, so a reply can't be rewritten from under
+                            // a stream that is still filling it in.
+                            val actionable = !state.isGenerating
+                            MessageBubble(
+                                message = message,
+                                streaming = message.id == streamingId,
+                                // Only the newest reply is replaceable: regenerating
+                                // an older one would silently discard everything
+                                // said after it.
+                                onRegenerate = if (actionable && message.id == replaceableReplyId) {
+                                    { viewModel.regenerate() }
+                                } else {
+                                    null
+                                },
+                                onEdit = if (actionable && message.role == Role.USER) {
+                                    { editing = message }
+                                } else {
+                                    null
+                                },
+                            )
                         }
                     }
                 }
@@ -360,6 +394,50 @@ private fun DeleteDialog(
         text = { Text(stringResource(R.string.history_delete_confirm, title)) },
         confirmButton = {
             TextButton(onClick = onConfirm) { Text(stringResource(R.string.history_delete)) }
+        },
+        dismissButton = {
+            TextButton(onClick = onCancel) { Text(stringResource(R.string.model_download_confirm_cancel)) }
+        },
+    )
+}
+
+/**
+ * Reword a question and ask it again. Because the conversation continues from
+ * that turn, everything said after it goes — so the dialog says how much, rather
+ * than dropping it silently on confirm.
+ */
+@Composable
+private fun EditMessageDialog(
+    initial: String,
+    discarded: Int,
+    onConfirm: (String) -> Unit,
+    onCancel: () -> Unit,
+) {
+    var text by remember { mutableStateOf(initial) }
+    AlertDialog(
+        onDismissRequest = onCancel,
+        title = { Text(stringResource(R.string.edit_message_title)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(dimensionResource(R.dimen.space_s))) {
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    maxLines = integerResource(R.integer.input_max_lines),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                if (discarded > 0) {
+                    Text(
+                        pluralStringResource(R.plurals.edit_message_discards, discarded, discarded),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(text) }, enabled = text.isNotBlank()) {
+                Text(stringResource(R.string.edit_message_send))
+            }
         },
         dismissButton = {
             TextButton(onClick = onCancel) { Text(stringResource(R.string.model_download_confirm_cancel)) }
