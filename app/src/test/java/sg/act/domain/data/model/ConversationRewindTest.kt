@@ -7,7 +7,7 @@ import org.junit.Test
 class ConversationRewindTest {
 
     private fun user(text: String) = Message(role = Role.USER, text = text)
-    private fun reply(text: String) = Message(role = Role.ORACLE, text = text)
+    private fun reply(text: String) = Message(role = Role.DOMAIN, text = text)
 
     /** A two-exchange chat: Q1/A1/Q2/A2. */
     private fun chat(vararg messages: Message) = Conversation(

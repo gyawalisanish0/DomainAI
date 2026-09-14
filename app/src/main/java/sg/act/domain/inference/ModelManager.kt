@@ -55,6 +55,8 @@ class ModelManager(
     private val deviceMaxThreads: Int,
     /** All core indices ordered fastest-first; the threadpool pins to the first N. */
     private val coresBySpeed: IntArray,
+    /** Prompt batch size passed to llama.cpp; larger = faster prefill, more RAM. */
+    private val deviceRecommendedBatchSize: Int = 512,
     /** User's context-length choice (0 = Auto). Read at each load. */
     private val contextSettings: ContextSettings,
     /** User's thread-count choice (0 = Auto). Read at each load. */
@@ -460,7 +462,7 @@ class ModelManager(
         } else {
             IntArray(0)
         }
-        llama.load(path, effectiveContextTokens(), gpuLayers, threads, affinity)
+        llama.load(path, effectiveContextTokens(), gpuLayers, threads, affinity, deviceRecommendedBatchSize)
         gpuGuard.endAttempt()
         backend = LlamaCppBackend(displayName, llama)
         val hasGpuDevice = llama.backendInfo().contains("[GPU]")

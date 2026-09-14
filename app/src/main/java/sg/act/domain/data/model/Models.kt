@@ -4,7 +4,7 @@ import kotlinx.serialization.Serializable
 import java.util.UUID
 
 /** Who authored a message. */
-enum class Role { USER, ORACLE }
+enum class Role { USER, DOMAIN }
 
 /**
  * Where an answer was produced. This is surfaced to the user on every Domain AI
