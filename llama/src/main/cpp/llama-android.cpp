@@ -21,7 +21,15 @@
 // Threadpool pinned to the device's fastest cores (see new_context). The app keeps
 // a single context loaded at a time, so one global handle is enough; it is created
 // with the context and freed with it.
+#ifndef GGML_BACKEND_DL
+// Only available in a statically-linked build. ggml_threadpool_*
+// is GGML_BACKEND_API, i.e. it lives inside the CPU backend — so it can only be
+// linked when that backend is statically linked in. Under GGML_BACKEND_DL the CPU
+// backend is a runtime plugin and these symbols are unavailable at link time, so
+// pinning is compiled out and llama.cpp uses its own internal threadpool. The
+// thread *count* is unaffected either way (params.n_threads below).
 static ggml_threadpool *g_threadpool = nullptr;
+#endif
 
 #define TAG "llama-android"
 #define LOGi(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
@@ -266,6 +274,7 @@ Java_sg_act_domain_llama_LLamaAndroid_new_1context(JNIEnv *env, jobject, jlong j
     // Pin the worker threads to the device's fastest cores so generation stays on the
     // powerful cores instead of drifting onto the little ones. Best-effort: Android's
     // cpuset/EAS scheduler may override the affinity request. Empty list = no pinning.
+#ifndef GGML_BACKEND_DL
     if (g_threadpool != nullptr) { ggml_threadpool_free(g_threadpool); g_threadpool = nullptr; }
     const jsize n_aff = jaffinity != nullptr ? env->GetArrayLength(jaffinity) : 0;
     if (n_aff > 0) {
@@ -289,6 +298,10 @@ Java_sg_act_domain_llama_LLamaAndroid_new_1context(JNIEnv *env, jobject, jlong j
             LOGe("ggml_threadpool_new failed; running without core pinning");
         }
     }
+#else
+    // Core pinning unavailable in DL mode (see the g_threadpool note above).
+    (void) jaffinity;
+#endif
 
     LOGi("Context ready: n_ctx=%d (trained=%d)", n_ctx, trained);
     return reinterpret_cast<jlong>(ctx);
@@ -302,11 +315,13 @@ Java_sg_act_domain_llama_LLamaAndroid_context_1size(JNIEnv *, jobject, jlong ctx
 JNIEXPORT void JNICALL
 Java_sg_act_domain_llama_LLamaAndroid_free_1context(JNIEnv *, jobject, jlong ctx) {
     auto *c = reinterpret_cast<llama_context *>(ctx);
+#ifndef GGML_BACKEND_DL
     if (g_threadpool != nullptr) {
         if (c != nullptr) llama_detach_threadpool(c);
         ggml_threadpool_free(g_threadpool);
         g_threadpool = nullptr;
     }
+#endif
     llama_free(c);
 }
 

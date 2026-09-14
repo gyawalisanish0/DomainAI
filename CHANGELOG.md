@@ -30,6 +30,14 @@ All notable changes to Domain AI are documented here. This project adheres to
 - The engine ships as several native libraries instead of one, since per-tier CPU
   kernel selection happens by loading the matching module at startup. This makes the
   APK larger; the model files it runs dwarf the difference.
+- **Generation threads are no longer pinned to the fastest cores.** The pinning added
+  in 1.05 needs `ggml_threadpool_*`, which lives inside the CPU backend and can only
+  be linked when that backend is compiled in statically — exactly what per-tier kernel
+  selection gives up. The thread *count* setting is unchanged and still adapts to the
+  device; only the core-affinity request is gone, and it was always best-effort
+  (Android's scheduler frequently overrode it). The faster kernels are expected to be
+  worth considerably more than the affinity hint, but that is a judgement to confirm
+  with the in-app benchmark, not an established measurement.
 
 ### Added
 - **Regenerate a reply.** Every finished reply carries a regenerate control: the answer

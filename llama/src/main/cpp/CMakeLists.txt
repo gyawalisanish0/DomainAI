@@ -50,6 +50,15 @@ set(GGML_NATIVE          OFF CACHE BOOL "" FORCE)
 # ggml_backend_load_all_from_path call in llama-android.cpp, which must point at
 # the app's nativeLibraryDir because the registry's default search paths (the
 # executable dir and the process CWD) find nothing on Android.
+#
+# It also costs the fastest-core thread pinning: ggml_threadpool_* is
+# GGML_BACKEND_API, so it lives in the CPU backend and cannot be linked once that
+# backend is a runtime plugin. llama-android.cpp compiles the pinning out under
+# GGML_BACKEND_DL and llama.cpp falls back to its internal threadpool; the thread
+# count is unaffected. To trade the newer kernels back for pinning, drop the three
+# switches below and set GGML_CPU_ARM_ARCH "armv8.2-a+dotprod+fp16" instead — that
+# configuration is known to build and costs ~70 KB, but gives up ARMv8.0 devices
+# (and would need a dotprod hwcap check to fail cleanly on them).
 set(BUILD_SHARED_LIBS        ON CACHE BOOL "" FORCE)
 set(GGML_BACKEND_DL          ON CACHE BOOL "" FORCE)
 set(GGML_CPU_ALL_VARIANTS    ON CACHE BOOL "" FORCE)
