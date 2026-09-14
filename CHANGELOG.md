@@ -28,8 +28,9 @@ All notable changes to Domain AI are documented here. This project adheres to
 
 ### Changed
 - The engine ships as several native libraries instead of one, since per-tier CPU
-  kernel selection happens by loading the matching module at startup. This makes the
-  APK larger; the model files it runs dwarf the difference.
+  kernel selection happens by loading the matching module at startup. That costs
+  about 8 MB of APK — next to the 0.7–1.6 GB of model weights it runs, a rounding
+  error.
 - **Generation threads are no longer pinned to the fastest cores.** The pinning added
   in 1.05 needs `ggml_threadpool_*`, which lives inside the CPU backend and can only
   be linked when that backend is compiled in statically — exactly what per-tier kernel
