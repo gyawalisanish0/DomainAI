@@ -6,22 +6,30 @@ All notable changes to Domain AI are documented here. This project adheres to
 ## [1.11] — 2026-09-14
 
 ### Performance
-- **Faster on-device inference on every modern phone.** The native engine was being
-  cross-compiled for baseline `armv8-a`, which left ggml's accelerated integer kernels
-  out of the build entirely — they are guarded on the compiler's dot-product feature
-  macro, and nothing was asking for it. The build now targets
-  `armv8.2-a+dotprod+fp16`, which switches those kernels on for quantized matmul —
-  most of the work in both prompt prefill and token generation. The llamafile/tinyBLAS
-  `sgemm` kernels are enabled alongside it (they gate on the same feature, so the two
-  compound).
+- **Much faster on-device inference, with no device left behind.** The native engine
+  was being cross-compiled for baseline `armv8-a`, which left ggml's accelerated
+  integer kernels out of the build entirely — they are guarded on the compiler's
+  dot-product and i8mm feature macros, and nothing was asking for either. The CPU
+  backend is now compiled once per ARM feature tier (baseline ARMv8.0 through ARMv9.2
+  with SME) and the best one the CPU actually supports is selected at startup. Modern
+  silicon gets dot-product, i8mm, SVE2 or SME kernels for quantized matmul — most of
+  the work in both prompt prefill and token generation — while older arm64 devices
+  keep working on the baseline tier. The llamafile/tinyBLAS `sgemm` kernels are
+  enabled alongside them and gate on the same features, so the two compound.
+- **q8_0 KV cache.** Long-context decoding on a phone is bound by memory traffic more
+  than arithmetic, so the key/value cache is now kept quantized — roughly halving that
+  traffic and freeing RAM a larger context can use instead. Models that can't support
+  it (no flash attention, or a head dimension that doesn't divide the block size) fall
+  back to the previous full-precision cache automatically.
+- **Right-sized prompt compute buffer.** The physical batch was tracking the
+  device-adaptive logical batch, so a high-RAM phone reserved a compute buffer sized
+  for 4096 tokens in exchange for prefill gains that had long since flattened. It is
+  now capped independently.
 
 ### Changed
-- **On-device models now require an ARMv8.2 CPU** with dot-product support — every
-  arm64 chip from roughly 2017 on (Snapdragon 845+, Exynos 9xxx, Dimensity, Tensor).
-  A few early arm64 parts lack it, notably the Snapdragon 835 and Exynos 8895. Rather
-  than crash on an unsupported instruction part-way through a reply, the app checks the
-  CPU before loading the engine and explains the situation; the offline responder and
-  cloud models are unaffected.
+- The engine ships as several native libraries instead of one, since per-tier CPU
+  kernel selection happens by loading the matching module at startup. This makes the
+  APK larger; the model files it runs dwarf the difference.
 
 ### Added
 - **Regenerate a reply.** Every finished reply carries a regenerate control: the answer

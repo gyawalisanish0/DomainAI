@@ -29,6 +29,9 @@ static ggml_threadpool *g_threadpool = nullptr;
 
 static constexpr int N_CTX = 4096;
 static constexpr int N_BATCH = 512;
+// Physical batch cap. Upstream's default; the compute buffer scales with it, so it
+// stays fixed while n_batch adapts to device RAM.
+static constexpr int N_UBATCH = 512;
 
 // Accumulates raw token bytes until they form a complete UTF-8 sequence, so we
 // never hand a half-codepoint to NewStringUTF (multibyte glyphs can split across
@@ -105,18 +108,31 @@ JNIEXPORT void JNICALL
 Java_sg_act_domain_llama_LLamaAndroid_backend_1init(
         JNIEnv *env, jobject, jboolean, jstring lib_dir, jint sdk_int) {
 #ifdef GGML_BACKEND_DL
-    // GPU build: backends are separate dlopen-able plugins. Load them explicitly.
-    // All link only Vulkan/OpenCL 1.0-era symbols (the Vulkan plugin resolves its
-    // one 1.1 entry point dynamically), so every backend is safe to attempt down to
-    // the app's minSdk. A device lacking a driver just fails the dlopen, which DL
-    // mode handles gracefully; the GpuGuard covers any deeper failure.
+    // Backends are separate dlopen-able plugins, so nothing is registered until we
+    // load them. This MUST be given the app's nativeLibraryDir: the registry's
+    // default search paths are the executable's directory and the process CWD,
+    // which on Android are /system/bin and /, so plain ggml_backend_load_all()
+    // finds nothing and the app ends up with no backend at all.
+    //
+    // load_all_from_path globs libggml-<name>-*.so, dlopens each, and asks every
+    // candidate to score itself against the running CPU — which is what selects
+    // one CPU variant out of the android_armv8.0_1..armv9.2_2 set built by
+    // GGML_CPU_ALL_VARIANTS. Loading a single hardcoded libggml-cpu.so would match
+    // none of those filenames and leave the device with no CPU backend.
+    //
+    // GPU plugins in the same directory are picked up by the same call. They link
+    // only Vulkan/OpenCL 1.0-era symbols (the Vulkan plugin resolves its one 1.1
+    // entry point dynamically), so every backend is safe to attempt down to the
+    // app's minSdk; a device lacking a driver just fails the dlopen, which DL mode
+    // handles gracefully, and the GpuGuard covers any deeper failure.
     if (lib_dir != nullptr) {
         const char *dir = env->GetStringUTFChars(lib_dir, nullptr);
         const std::string d(dir);
         env->ReleaseStringUTFChars(lib_dir, dir);
-        ggml_backend_load((d + "/libggml-cpu.so").c_str());
-        ggml_backend_load((d + "/libggml-opencl.so").c_str());
-        ggml_backend_load((d + "/libggml-vulkan.so").c_str());
+        LOGi("Loading ggml backends from %s", d.c_str());
+        ggml_backend_load_all_from_path(d.c_str());
+    } else {
+        LOGe("No native library dir supplied; no ggml backend can be loaded");
     }
     (void) sdk_int;
 #else
@@ -208,7 +224,12 @@ Java_sg_act_domain_llama_LLamaAndroid_new_1context(JNIEnv *env, jobject, jlong j
     llama_context_params params = llama_context_default_params();
     params.n_ctx = n_ctx;
     params.n_batch = n_batch;
-    params.n_ubatch = n_batch;
+    // n_ubatch is the *physical* batch, and the compute buffer is sized from it — so
+    // it must not simply track n_batch. The device-adaptive sizing can ask for 4096,
+    // which would reserve a compute buffer far larger than a phone wants in exchange
+    // for prefill gains that have long since flattened. Cap it at upstream's default
+    // and let n_batch stay adaptive (it only bounds how much is submitted at once).
+    params.n_ubatch = std::min(n_batch, N_UBATCH);
     // Thread count is chosen on the Kotlin side from the device's CPU (see
     // DeviceCapabilities.recommendedThreads). Fall back to 4 if unset.
     const int threads = n_threads_requested > 0 ? n_threads_requested : 4;
@@ -216,7 +237,27 @@ Java_sg_act_domain_llama_LLamaAndroid_new_1context(JNIEnv *env, jobject, jlong j
     params.n_threads_batch = threads;
     LOGi("Context using %d threads", threads);
 
+    // Quantize the KV cache to q8_0. Long-context decoding on a phone is bound by
+    // memory traffic rather than arithmetic, and this roughly halves the KV half of
+    // it, while freeing RAM that a larger context can use instead.
+    //
+    // It is not universally applicable, and llama.cpp signals that by refusing to
+    // build the context at all (returning null) rather than degrading: a quantized V
+    // cache requires flash attention, which is AUTO here and gets forced off for
+    // some models, and either cache is refused when the model's head dimension is
+    // not a multiple of q8_0's block size of 32 (head dims of 80 exist). So treat
+    // quantization as an attempt and fall back to f16 instead of leaving the model
+    // unloadable.
+    params.type_k = GGML_TYPE_Q8_0;
+    params.type_v = GGML_TYPE_Q8_0;
+
     llama_context *ctx = llama_init_from_model(model, params);
+    if (ctx == nullptr) {
+        LOGi("q8_0 KV cache rejected for this model; retrying with f16");
+        params.type_k = GGML_TYPE_F16;
+        params.type_v = GGML_TYPE_F16;
+        ctx = llama_init_from_model(model, params);
+    }
     if (ctx == nullptr) {
         LOGe("llama_init_from_model failed");
         return 0;

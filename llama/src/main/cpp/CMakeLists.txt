@@ -3,8 +3,8 @@ cmake_minimum_required(VERSION 3.22.1)
 project("llama-android")
 
 # Build llama.cpp (vendored in-tree). Disable everything we don't ship so the
-# Android cross-compile stays lean: just the core llama + ggml CPU backend,
-# statically linked into our single JNI library.
+# Android cross-compile stays lean: just the core llama + ggml, plus the CPU
+# backend variants selected at runtime (see "Target CPU ISA" below).
 set(LLAMA_BUILD_COMMON   OFF CACHE BOOL "" FORCE)
 set(LLAMA_BUILD_TESTS    OFF CACHE BOOL "" FORCE)
 set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
@@ -23,32 +23,36 @@ set(GGML_OPENMP          OFF CACHE BOOL "" FORCE)
 set(GGML_LLAMAFILE       ON  CACHE BOOL "" FORCE)
 
 # NATIVE must stay off when cross-compiling — it would probe the *build host's*
-# CPU (an x86_64 runner) rather than the target. Target ISA features are selected
-# by GGML_CPU_ARM_ARCH / GGML_CPU_ALL_VARIANTS instead.
+# CPU (an x86_64 runner) rather than the target. Target ISA features come from
+# GGML_CPU_ALL_VARIANTS below instead.
 set(GGML_NATIVE          OFF CACHE BOOL "" FORCE)
 
-# --- Target CPU ISA ---------------------------------------------------------
-# Without this the cross-compile lands on the NDK's baseline armv8-a, so none of
-# ggml's accelerated integer kernels are compiled in at all: they are guarded on
-# __ARM_FEATURE_DOTPROD, which the compiler only defines from -march. That makes
-# dotprod the single largest CPU win available, since quantized matmul is most of
-# both prefill and generation (it also switches on the dotprod paths inside the
-# llamafile sgemm kernels enabled above).
+# --- Target CPU ISA (runtime dispatch) --------------------------------------
+# Left alone, the cross-compile lands on the NDK's baseline armv8-a and none of
+# ggml's accelerated integer kernels make it into the binary at all: they are
+# guarded on __ARM_FEATURE_DOTPROD / __ARM_FEATURE_MATMUL_INT8, which the compiler
+# only defines from -march. Since quantized matmul is most of both prefill and
+# generation, that is the single largest CPU win on the table (it also switches on
+# the equivalent paths inside the llamafile sgemm kernels enabled above).
 #
-# Requires an ARMv8.2 CPU. Every arm64 SoC from ~2017 on has dotprod
-# (Cortex-A55/A75 and later: Snapdragon 845+, Exynos 9xxx, Dimensity, Tensor),
-# but ARMv8.0 arm64 parts do not — Snapdragon 835 and Exynos 8895 most notably.
-# Those instructions can be emitted anywhere in the library, so such a device
-# would SIGILL at an arbitrary point rather than fail cleanly; DeviceCapabilities
-# checks the dotprod hwcap before the native library is loaded and keeps the app
-# on its offline responder instead.
+# Rather than commit the whole library to one baseline — which would trade away
+# every device below it — ALL_VARIANTS compiles the CPU backend once per feature
+# tier and picks the best one the CPU actually supports at runtime. ggml ships an
+# Android-specific tier list (android_armv8.0_1 through android_armv9.2_2), so
+# ARMv8.0 parts keep working on the baseline variant while newer silicon gets
+# dotprod, i8mm, SVE2 or SME.
 #
-# i8mm/SVE2/SME are deliberately NOT requested here: they would raise the
-# baseline to armv8.6-a and drop everything before ~2021 flagships. Recovering
-# those without dropping any device needs GGML_CPU_ALL_VARIANTS runtime dispatch,
-# which is a separate change (it forces BUILD_SHARED_LIBS and multi-.so
-# packaging).
-set(GGML_CPU_ARM_ARCH    "armv8.2-a+dotprod+fp16" CACHE STRING "" FORCE)
+# The cost is packaging: ALL_VARIANTS requires GGML_BACKEND_DL, which in turn
+# requires BUILD_SHARED_LIBS. So instead of one statically-linked
+# libllama-android.so the APK carries libllama/libggml/libggml-base plus one
+# libggml-cpu-<tier>.so per variant, each a full copy of the kernels. They are
+# dlopen-ed at startup by ggml's backend registry — see the
+# ggml_backend_load_all_from_path call in llama-android.cpp, which must point at
+# the app's nativeLibraryDir because the registry's default search paths (the
+# executable dir and the process CWD) find nothing on Android.
+set(BUILD_SHARED_LIBS        ON CACHE BOOL "" FORCE)
+set(GGML_BACKEND_DL          ON CACHE BOOL "" FORCE)
+set(GGML_CPU_ALL_VARIANTS    ON CACHE BOOL "" FORCE)
 
 # --- GPU acceleration (Vulkan + OpenCL) -------------------------------------
 # Off by default so the plain CPU cross-compile always works (e.g. contributors
@@ -57,10 +61,13 @@ set(GGML_CPU_ARM_ARCH    "armv8.2-a+dotprod+fp16" CACHE STRING "" FORCE)
 option(ORACLE_GPU "Build llama.cpp with GPU backends (Vulkan + OpenCL)" OFF)
 
 if(ORACLE_GPU)
-    # GPU backends are statically linked into libllama-android.so and
-    # self-register at init, so the CPU backend is always present (no runtime
-    # plugin loading). Vulkan is safe down to minSdk because ggml-vulkan resolves
-    # its one >1.0 entry point dynamically (see the ggml-vulkan.cpp patch); OpenCL
+    # Under GGML_BACKEND_DL (above) the GPU backends are their own dlopen-able
+    # .so files rather than being statically linked in, so they are loaded by the
+    # same ggml_backend_load_all_from_path call that brings in the CPU variants. A
+    # device with no usable driver simply fails that dlopen, which DL mode handles
+    # gracefully, and the CPU backend still registers — so GPU is additive, never
+    # load-bearing. Vulkan is safe down to minSdk because ggml-vulkan resolves its
+    # one >1.0 entry point dynamically (see the ggml-vulkan.cpp patch); OpenCL
     # binds the device's ICD at runtime.
 
     # OpenCL: the Adreno-optimized backend Qualcomm contributed. Kernels are

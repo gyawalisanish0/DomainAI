@@ -110,8 +110,35 @@ llama/
   `LocalEngine` a backend provider, so the active model swaps at runtime without
   rebuilding the router.
 - The JNI is written against llama.cpp's current C API and avoids the `common`
-  helper lib (batches are filled inline), keeping the build to a single small
-  `libllama-android.so` plus the ggml backends.
+  helper lib (batches are filled inline), keeping our own `libllama-android.so`
+  small.
+
+### CPU kernel selection
+
+ggml's fast integer kernels are compile-time gated on ARM feature macros
+(`__ARM_FEATURE_DOTPROD`, `__ARM_FEATURE_MATMUL_INT8`, …) that the compiler only
+defines from `-march`. A cross-compile that names no target therefore silently
+produces a binary with *none* of them — which is what the build did until v1.11.
+
+Committing the whole library to one `-march` would fix that at the cost of every
+device below the chosen baseline, so the build instead sets `GGML_CPU_ALL_VARIANTS`:
+ggml compiles its CPU backend once per feature tier (it ships an Android-specific
+list, `android_armv8.0_1` … `android_armv9.2_2`) and each variant scores itself
+against the running CPU so the best supported one wins at startup.
+
+The consequence is packaging. `GGML_CPU_ALL_VARIANTS` requires `GGML_BACKEND_DL`,
+which requires `BUILD_SHARED_LIBS` — so the native payload is no longer one static
+library but `libllama`/`libggml`/`libggml-base` plus a `libggml-cpu-<tier>.so` per
+variant, and the GPU backends become dlopen-able modules too rather than being
+statically linked in.
+
+Nothing is registered until those modules are loaded, and the registry's default
+search paths (the executable's directory, the process CWD) resolve to `/system/bin`
+and `/` on Android — where it finds nothing. `backend_init` therefore calls
+`ggml_backend_load_all_from_path` with the app's `nativeLibraryDir`, plumbed through
+from `DomainApp` via `ModelManager` → `LLamaAndroid.configure`. **If that path is
+wrong or missing, no backend registers and no model can load at all** — it is the
+one load-bearing step in this arrangement.
 
 ### Streaming
 
