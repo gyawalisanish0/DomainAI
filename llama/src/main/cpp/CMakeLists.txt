@@ -3,8 +3,14 @@ cmake_minimum_required(VERSION 3.22.1)
 project("llama-android")
 
 # Build llama.cpp (vendored in-tree). Disable everything we don't ship so the
-# Android cross-compile stays lean: just the core llama + ggml CPU backend,
-# statically linked into our single JNI library.
+# Android cross-compile stays lean: just core llama + ggml and the CPU backend.
+#
+# Those land as separate .so files (libggml, libggml-base, libggml-cpu, libllama)
+# which our libllama-android.so pulls in through ordinary DT_NEEDED links, so the
+# dynamic linker loads the whole chain on System.loadLibrary. That is NOT the same
+# as GGML_BACKEND_DL: there the backends become MODULE libraries with no NEEDED
+# entry, discovered only by a runtime directory scan — which is what broke on
+# device (see "Target CPU ISA" below and docs/ARCHITECTURE.md).
 set(LLAMA_BUILD_COMMON   OFF CACHE BOOL "" FORCE)
 set(LLAMA_BUILD_TESTS    OFF CACHE BOOL "" FORCE)
 set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
@@ -57,11 +63,11 @@ set(GGML_CPU_ARM_ARCH    "armv8.2-a+dotprod+fp16" CACHE STRING "" FORCE)
 option(ORACLE_GPU "Build llama.cpp with GPU backends (Vulkan + OpenCL)" OFF)
 
 if(ORACLE_GPU)
-    # GPU backends are statically linked into libllama-android.so and
-    # self-register at init, so the CPU backend is always present (no runtime
-    # plugin loading). Vulkan is safe down to minSdk because ggml-vulkan resolves
-    # its one >1.0 entry point dynamically (see the ggml-vulkan.cpp patch); OpenCL
-    # binds the device's ICD at runtime.
+    # The GPU backends are DT_NEEDED dependencies of libggml.so just like the CPU
+    # backend, so they load with it and self-register at init — no runtime plugin
+    # discovery anywhere in this build. Vulkan is safe down to minSdk because
+    # ggml-vulkan resolves its one >1.0 entry point dynamically (see the
+    # ggml-vulkan.cpp patch); OpenCL binds the device's ICD at runtime.
 
     # OpenCL: the Adreno-optimized backend Qualcomm contributed. Kernels are
     # embedded into the .so (no runtime asset loading) and the Adreno-tuned

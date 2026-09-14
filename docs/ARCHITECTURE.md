@@ -120,9 +120,19 @@ ggml's fast integer kernels are compile-time gated on ARM feature macros
 defines from `-march`. A cross-compile that names no target therefore silently
 produces a binary with *none* of them — which is what the build did until v1.11.
 
-The build now sets `GGML_CPU_ARM_ARCH` to `armv8.2-a+dotprod+fp16`, statically, for
-the whole library. That is a deliberate second choice; the first was rejected on
-device, and the reason is worth keeping:
+The build now sets `GGML_CPU_ARM_ARCH` to `armv8.2-a+dotprod+fp16` for the whole
+library. ggml still builds as several `.so` files, but they are ordinary **shared**
+libraries wired together by `DT_NEEDED` — `libggml.so` names `libggml-cpu.so`,
+`libggml-vulkan.so`, `libggml-opencl.so` and `libggml-base.so` — so the dynamic
+linker loads the entire chain on `System.loadLibrary`, with no discovery step. That
+distinction, SHARED-with-`NEEDED` versus `MODULE`-discovered-at-runtime, is the whole
+reason this works and the alternative below does not.
+
+Verified from the shipped APK: `libggml-cpu.so` carries 1048 `sdot`/`udot`
+instructions, and `libggml.so` has a `NEEDED` entry for it.
+
+The fixed baseline is a deliberate second choice; the first was rejected on device,
+and the reason is worth keeping:
 
 > **Why not `GGML_CPU_ALL_VARIANTS`?** ggml can compile the CPU backend once per
 > feature tier (it ships an Android list, `android_armv8.0_1` … `android_armv9.2_2`)
