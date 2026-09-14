@@ -11,7 +11,7 @@ name: Firebase Test Lab (device matrix)
 # Manual-only on purpose: Test Lab via the CLI bills per device-minute on the
 # Blaze plan, so we don't burn it on every push.
 #
-# ── One-time setup (all doable from a phone browser) ─────────────────────────
+# ── One-time setup (all doable in the browser) ───────────────────────────────
 #  0. The project must be on the **Blaze (pay-as-you-go) plan**. Test Lab via the
 #     CLI/CI uploads the APK to Cloud Storage, which requires billing — on the free
 #     Spark plan every run fails at upload with a 403 "billing account ... absent",
