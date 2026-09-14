@@ -6,16 +6,13 @@ All notable changes to Domain AI are documented here. This project adheres to
 ## [1.11] — 2026-09-14
 
 ### Performance
-- **Much faster on-device inference, with no device left behind.** The native engine
-  was being cross-compiled for baseline `armv8-a`, which left ggml's accelerated
-  integer kernels out of the build entirely — they are guarded on the compiler's
-  dot-product and i8mm feature macros, and nothing was asking for either. The CPU
-  backend is now compiled once per ARM feature tier (baseline ARMv8.0 through ARMv9.2
-  with SME) and the best one the CPU actually supports is selected at startup. Modern
-  silicon gets dot-product, i8mm, SVE2 or SME kernels for quantized matmul — most of
-  the work in both prompt prefill and token generation — while older arm64 devices
-  keep working on the baseline tier. The llamafile/tinyBLAS `sgemm` kernels are
-  enabled alongside them and gate on the same features, so the two compound.
+- **Faster on-device inference.** The native engine was being cross-compiled for
+  baseline `armv8-a`, which left ggml's accelerated integer kernels out of the build
+  entirely — they are guarded on the compiler's dot-product feature macro, and nothing
+  was asking for it. The build now targets `armv8.2-a+dotprod+fp16`, compiling them in
+  for quantized matmul: most of the work in both prompt prefill and token generation.
+  The llamafile/tinyBLAS `sgemm` kernels are enabled alongside it and gate on the same
+  feature, so the two compound. Costs under 1 MB of APK.
 - **q8_0 KV cache.** Long-context decoding on a phone is bound by memory traffic more
   than arithmetic, so the key/value cache is now kept quantized — roughly halving that
   traffic and freeing RAM a larger context can use instead. Models that can't support
@@ -27,18 +24,12 @@ All notable changes to Domain AI are documented here. This project adheres to
   now capped independently.
 
 ### Changed
-- The engine ships as several native libraries instead of one, since per-tier CPU
-  kernel selection happens by loading the matching module at startup. That costs
-  about 8 MB of APK — next to the 0.7–1.6 GB of model weights it runs, a rounding
-  error.
-- **Generation threads are no longer pinned to the fastest cores.** The pinning added
-  in 1.05 needs `ggml_threadpool_*`, which lives inside the CPU backend and can only
-  be linked when that backend is compiled in statically — exactly what per-tier kernel
-  selection gives up. The thread *count* setting is unchanged and still adapts to the
-  device; only the core-affinity request is gone, and it was always best-effort
-  (Android's scheduler frequently overrode it). The faster kernels are expected to be
-  worth considerably more than the affinity hint, but that is a judgement to confirm
-  with the in-app benchmark, not an established measurement.
+- **On-device models now require an ARMv8.2 CPU** with dot-product support — every
+  arm64 chip from roughly 2017 on (Snapdragon 845+, Exynos 9xxx, Dimensity, Tensor).
+  A few early arm64 parts lack it, notably the Snapdragon 835 and Exynos 8895. Rather
+  than crash on an unsupported instruction part-way through a reply, the app checks the
+  CPU before loading the engine and explains the situation; the offline responder and
+  cloud models are unaffected.
 
 ### Added
 - **Regenerate a reply.** Every finished reply carries a regenerate control: the answer

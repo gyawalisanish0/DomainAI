@@ -120,25 +120,43 @@ ggml's fast integer kernels are compile-time gated on ARM feature macros
 defines from `-march`. A cross-compile that names no target therefore silently
 produces a binary with *none* of them — which is what the build did until v1.11.
 
-Committing the whole library to one `-march` would fix that at the cost of every
-device below the chosen baseline, so the build instead sets `GGML_CPU_ALL_VARIANTS`:
-ggml compiles its CPU backend once per feature tier (it ships an Android-specific
-list, `android_armv8.0_1` … `android_armv9.2_2`) and each variant scores itself
-against the running CPU so the best supported one wins at startup.
+The build now sets `GGML_CPU_ARM_ARCH` to `armv8.2-a+dotprod+fp16`, statically, for
+the whole library. That is a deliberate second choice; the first was rejected on
+device, and the reason is worth keeping:
 
-The consequence is packaging. `GGML_CPU_ALL_VARIANTS` requires `GGML_BACKEND_DL`,
-which requires `BUILD_SHARED_LIBS` — so the native payload is no longer one static
-library but `libllama`/`libggml`/`libggml-base` plus a `libggml-cpu-<tier>.so` per
-variant, and the GPU backends become dlopen-able modules too rather than being
-statically linked in.
+> **Why not `GGML_CPU_ALL_VARIANTS`?** ggml can compile the CPU backend once per
+> feature tier (it ships an Android list, `android_armv8.0_1` … `android_armv9.2_2`)
+> and pick the best at runtime — full dotprod/i8mm/SVE2/SME *and* no device dropped.
+> It was implemented, built green, and failed on hardware with
+> `llama_model_load_from_file_impl: no backends are loaded`.
+>
+> Two blockers, both structural:
+>
+> 1. `GGML_CPU_ALL_VARIANTS` requires `GGML_BACKEND_DL`, which makes each variant a
+>    `MODULE` library that ggml's registry discovers with a **filesystem**
+>    `directory_iterator` over a directory you hand it. On Android, AGP sets
+>    `extractNativeLibs=false` by default (minSdk ≥ 23): the `.so` files are stored
+>    uncompressed *inside* the APK and mmap'd from there by the linker — note
+>    `base.apk!/lib/arm64-v8a/…` in logcat — so **`nativeLibraryDir` contains no
+>    files** and the scan finds nothing. Forcing `useLegacyPackaging = true` fixes
+>    the scan but extracts every library to `/data` as well, roughly doubling the
+>    install footprint on top of a ~30 MB APK increase for the seven kernel copies.
+> 2. `ggml_threadpool_*` is `GGML_BACKEND_API`, i.e. it lives *in* the CPU backend,
+>    so it cannot be linked once that backend is a runtime plugin — which costs the
+>    fastest-core pinning from v1.05.
+>
+> A viable third path, if this is revisited: skip the directory scan and call
+> `ggml_backend_load("libggml-cpu-<tier>.so")` with a **bare soname**, which the
+> Android linker resolves from the APK namespace, selecting the tier ourselves via
+> each candidate's exported `ggml_backend_score`. That keeps modern packaging and
+> needs no extraction, at the cost of owning the tier list.
 
-Nothing is registered until those modules are loaded, and the registry's default
-search paths (the executable's directory, the process CWD) resolve to `/system/bin`
-and `/` on Android — where it finds nothing. `backend_init` therefore calls
-`ggml_backend_load_all_from_path` with the app's `nativeLibraryDir`, plumbed through
-from `DomainApp` via `ModelManager` → `LLamaAndroid.configure`. **If that path is
-wrong or missing, no backend registers and no model can load at all** — it is the
-one load-bearing step in this arrangement.
+Because the ISA baseline is fixed, an ARMv8.0 arm64 CPU (Snapdragon 835, Exynos
+8895) would execute an unsupported instruction at whatever point the compiler
+emitted one. `CpuFeatures` reads the `asimddp` hwcap from `/proc/cpuinfo` and
+`ModelManager` refuses the load with an explanation rather than letting the process
+die mid-reply; the parse is pure and unit-tested, and gives the device the benefit
+of the doubt when the `Features` line is absent.
 
 ### Streaming
 

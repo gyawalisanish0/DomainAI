@@ -7,6 +7,7 @@ import sg.act.domain.data.local.ModelSource
 import sg.act.domain.data.local.ModelStorage
 import sg.act.domain.data.local.ModelStore
 import sg.act.domain.llama.LLamaAndroid
+import sg.act.domain.privacy.CpuFeatures
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -66,6 +67,11 @@ class ModelManager(
     /** App-private native lib dir + device API level for selective backend loading. */
     private val nativeLibDir: String? = null,
     private val sdkInt: Int = 0,
+    /**
+     * Whether this CPU implements the dot-product extension the native library is
+     * compiled for (`armv8.2-a+dotprod`). Probed once; see [CpuFeatures].
+     */
+    private val cpuSupported: Boolean = CpuFeatures.deviceHasDotprod(),
     private val downloader: ModelDownloader = ModelDownloader(),
     private val llama: LLamaAndroid = LLamaAndroid.instance(),
 ) {
@@ -405,6 +411,14 @@ class ModelManager(
     }
 
     private suspend fun loadIntoContext(path: String, displayName: String, fileName: String) {
+        // The native library is compiled for armv8.2-a+dotprod. On an ARMv8.0 arm64
+        // CPU those instructions raise SIGILL at whatever point the compiler happened
+        // to emit one — so refuse here, while we can still say why, rather than
+        // aborting the process mid-reply. The offline responder keeps working.
+        if (!cpuSupported) {
+            _state.value = State.Error(context.getString(R.string.model_cpu_unsupported))
+            return
+        }
         _state.value = State.Loading(displayName, fileName)
         // Reflect the new active model in the installed list immediately, so the
         // checkmark follows the subtitle the instant loading begins — not only after
