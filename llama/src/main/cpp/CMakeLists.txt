@@ -11,8 +11,20 @@ set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(LLAMA_BUILD_TOOLS    OFF CACHE BOOL "" FORCE)
 set(LLAMA_BUILD_SERVER   OFF CACHE BOOL "" FORCE)
 set(LLAMA_CURL           OFF CACHE BOOL "" FORCE)
+# OpenMP stays off: ggml's own pthread threadpool is what lets us pin workers to
+# the fastest cores (see the cpumask in llama-android.cpp), and it saves shipping
+# libomp.so.
 set(GGML_OPENMP          OFF CACHE BOOL "" FORCE)
-set(GGML_LLAMAFILE       OFF CACHE BOOL "" FORCE)
+
+# llamafile/tinyBLAS sgemm kernels — upstream's default (GGML_LLAMAFILE_DEFAULT
+# is ON), and the blocked matmul path that prompt prefill leans on. It was off
+# only to keep the cross-compile lean, which traded prefill speed for a smaller
+# .so; prefill latency is the more valuable of the two here.
+set(GGML_LLAMAFILE       ON  CACHE BOOL "" FORCE)
+
+# NATIVE must stay off when cross-compiling — it would probe the *build host's*
+# CPU (an x86_64 runner) rather than the target. Target ISA features are selected
+# by GGML_CPU_ARM_ARCH / GGML_CPU_ALL_VARIANTS instead.
 set(GGML_NATIVE          OFF CACHE BOOL "" FORCE)
 
 # --- GPU acceleration (Vulkan + OpenCL) -------------------------------------
