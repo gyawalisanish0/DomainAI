@@ -1,72 +1,90 @@
 package sg.act.domain.privacy
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 
 class CpuFeaturesTest {
 
-    /** A core stanza as `/proc/cpuinfo` renders it on arm64. */
-    private fun core(index: Int, features: String) = """
-        processor	: $index
-        BogoMIPS	: 38.40
-        Features	: $features
-        CPU implementer	: 0x41
-    """.trimIndent()
+    private companion object {
+        const val AT_NULL = 0L
+        const val AT_PAGESZ = 6L
+        const val AT_HWCAP = 16L
+        const val AT_HWCAP2 = 26L
+        const val HWCAP_ASIMDDP = 1L shl 20
+        /** A plausible arm64 bitmask with fp, asimd, aes, crc32 … and dotprod. */
+        const val HWCAP_WITH_DP = 0x0000_0000_001F_FFFFL
+        /** The same, minus the dot-product bit. */
+        const val HWCAP_WITHOUT_DP = HWCAP_WITH_DP and HWCAP_ASIMDDP.inv()
+    }
 
-    // Snapdragon 845-era and later: dot product present.
-    private val v82Features = "fp asimd evtstrm aes pmull sha1 sha2 crc32 atomics fphp asimdhp cpuid asimdrdm lrcpc dcpop asimddp"
-
-    // Snapdragon 835-era: ARMv8.0, no asimddp.
-    private val v80Features = "fp asimd evtstrm aes pmull sha1 sha2 crc32"
-
-    @Test
-    fun `detects dotprod on an armv8_2 cpu`() {
-        assertTrue(CpuFeatures.hasDotprod(core(0, v82Features)))
+    /** Build a little-endian 64-bit auxv image from (type, value) pairs. */
+    private fun auxv(vararg pairs: Pair<Long, Long>): ByteArray {
+        val b = ByteBuffer.allocate(pairs.size * 16).order(ByteOrder.LITTLE_ENDIAN)
+        pairs.forEach { (t, v) -> b.putLong(t); b.putLong(v) }
+        return b.array()
     }
 
     @Test
-    fun `reports no dotprod on an armv8_0 cpu`() {
-        assertFalse(CpuFeatures.hasDotprod(core(0, v80Features)))
+    fun `finds AT_HWCAP among other entries`() {
+        val image = auxv(AT_PAGESZ to 4096L, AT_HWCAP to HWCAP_WITH_DP, AT_NULL to 0L)
+        assertEquals(HWCAP_WITH_DP, CpuFeatures.hwcapFrom(image))
     }
 
     @Test
-    fun `any core advertising dotprod counts as support`() {
-        // big.LITTLE kernels print one Features line per core; they can disagree.
-        val mixed = core(0, v80Features) + "\n\n" + core(4, v82Features)
-        assertTrue(CpuFeatures.hasDotprod(mixed))
+    fun `reports dotprod when the bit is set`() {
+        assertTrue(CpuFeatures.hasDotprod(auxv(AT_HWCAP to HWCAP_WITH_DP, AT_NULL to 0L)))
     }
 
     @Test
-    fun `all cores lacking dotprod reports no support`() {
-        val uniform = core(0, v80Features) + "\n\n" + core(4, v80Features)
-        assertFalse(CpuFeatures.hasDotprod(uniform))
+    fun `reports no dotprod when the bit is clear`() {
+        // Every other feature bit set, dotprod alone missing — an ARMv8.0 part.
+        assertTrue(HWCAP_WITHOUT_DP != 0L) // sanity: the mask is otherwise populated
+        assertFalse(CpuFeatures.hasDotprod(auxv(AT_HWCAP to HWCAP_WITHOUT_DP, AT_NULL to 0L)))
     }
 
     @Test
-    fun `assumes capable when no Features line is present`() {
-        // Some kernels omit Features entirely; refusing inference there would
-        // disable a capable phone, so the benefit of the doubt goes to the device.
-        assertTrue(CpuFeatures.hasDotprod("processor\t: 0\nBogoMIPS\t: 38.40\n"))
-        assertTrue(CpuFeatures.hasDotprod(""))
+    fun `only the dotprod bit decides`() {
+        assertTrue(CpuFeatures.hasDotprod(auxv(AT_HWCAP to HWCAP_ASIMDDP, AT_NULL to 0L)))
+        assertFalse(CpuFeatures.hasDotprod(auxv(AT_HWCAP to 0L, AT_NULL to 0L)))
     }
 
     @Test
-    fun `a substring of the flag is not a match`() {
-        // "asimddphd" must not satisfy the asimddp check.
-        assertFalse(CpuFeatures.hasDotprod(core(0, "fp asimd asimddphd")))
-        // ...but the real flag next to similar names still matches.
-        assertTrue(CpuFeatures.hasDotprod(core(0, "fp asimdhp asimddp asimdrdm")))
+    fun `stops at the AT_NULL terminator`() {
+        // An AT_HWCAP after the terminator is not part of the vector.
+        val image = auxv(AT_NULL to 0L, AT_HWCAP to HWCAP_WITH_DP)
+        assertNull(CpuFeatures.hwcapFrom(image))
     }
 
     @Test
-    fun `feature matching tolerates tabs and odd spacing`() {
-        assertTrue(CpuFeatures.hasDotprod("Features\t:\tfp\tasimd\tasimddp\n"))
+    fun `assumes capable when AT_HWCAP is absent`() {
+        // This is the safety valve: never disable inference on an unreadable answer.
+        assertNull(CpuFeatures.hwcapFrom(auxv(AT_PAGESZ to 4096L, AT_NULL to 0L)))
+        assertTrue(CpuFeatures.hasDotprod(auxv(AT_PAGESZ to 4096L, AT_NULL to 0L)))
     }
 
     @Test
-    fun `an unrelated line mentioning the flag is ignored`() {
-        // Only a Features line counts — not model names or other keys.
-        assertFalse(CpuFeatures.hasDotprod("Hardware\t: asimddp board\nFeatures\t: fp asimd\n"))
+    fun `assumes capable on an empty or truncated vector`() {
+        assertTrue(CpuFeatures.hasDotprod(ByteArray(0)))
+        assertTrue(CpuFeatures.hasDotprod(ByteArray(7)))   // shorter than one field
+        assertTrue(CpuFeatures.hasDotprod(ByteArray(15)))  // half a pair
+    }
+
+    @Test
+    fun `ignores AT_HWCAP2 which carries different bits`() {
+        // i8mm/sve2 live in HWCAP2; bit 20 there means something else entirely, so
+        // it must not be mistaken for dotprod.
+        val image = auxv(AT_HWCAP2 to HWCAP_ASIMDDP, AT_HWCAP to 0L, AT_NULL to 0L)
+        assertFalse(CpuFeatures.hasDotprod(image))
+    }
+
+    @Test
+    fun `takes the first AT_HWCAP entry`() {
+        val image = auxv(AT_HWCAP to HWCAP_WITH_DP, AT_HWCAP to 0L, AT_NULL to 0L)
+        assertEquals(HWCAP_WITH_DP, CpuFeatures.hwcapFrom(image))
     }
 }
