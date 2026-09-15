@@ -28,6 +28,13 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          # Skip the action's default 'tools platform-tools' install: the
+          # obsolete 'tools' package was withdrawn from the SDK repository and
+          # sdkmanager now exits 1 on it ("Failed to find package 'tools'"),
+          # failing the job before anything is built. Everything this build
+          # actually needs is installed explicitly in the next step.
+          packages: platform-tools
 
       - name: Install NDK and CMake
         run: |
