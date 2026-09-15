@@ -1,7 +1,9 @@
-# CI, signing & crash reporting — building Domain AI entirely on GitHub (no PC)
+# CI, signing & crash reporting — building Domain AI entirely on GitHub
 
-You can build, sign, and ship Domain AI without a local machine. Everything runs in
-GitHub Actions; you only need a browser. This guide walks through it end to end.
+You can build, sign, and ship Domain AI without a local Android toolchain — no SDK,
+NDK or CMake install required. Everything runs in GitHub Actions, so a browser is
+enough, on whatever machine you happen to have. This guide walks through it end to
+end.
 
 ## What the two workflows do
 
@@ -17,17 +19,18 @@ auto-mirrors your `google-services.json` to the `.debug` package at build time, 
 crashes from both variants report to the same Firebase project.
 
 Every assemble step also prints the signing certificate **SHA-1 / SHA-256** to the
-build log (look for the `[signing]` lines), so you never need a PC to read them.
+build log (look for the `[signing]` lines), so you can read them without a local
+keystore or `keytool` install.
 
 ---
 
 ## One-time setup (all in the browser)
 
-You'll create a keystore and base64-encode a few files. Since you have no PC, use a
-free browser shell — **GitHub Codespaces** (open this repo → `<> Code` →
-*Codespaces* → *Create codespace*) or **Google Cloud Shell**
-(<https://shell.cloud.google.com>). Both give you a Linux terminal with `keytool`,
-`base64`, and `openssl` preinstalled.
+You'll create a keystore and base64-encode a few files. Any Linux/macOS terminal with
+`keytool`, `base64` and `openssl` will do. If you'd rather not install a JDK locally,
+a free browser shell works just as well — **GitHub Codespaces** (open this repo →
+`<> Code` → *Codespaces* → *Create codespace*) or **Google Cloud Shell**
+(<https://shell.cloud.google.com>); both ship all three preinstalled.
 
 ### Step 1 — Create your release keystore (once)
 
@@ -94,7 +97,7 @@ That's it — no files are committed; the workflows decode these at build time.
 
 ---
 
-## Building & downloading APKs (no PC)
+## Building & downloading APKs
 
 ### Debug build (fast, for testing on your phone)
 
@@ -140,7 +143,7 @@ Open any CI or Release run → the **Print signing SHA fingerprints** step. You'
 
 ---
 
-## Local signed builds (only if you ever get a PC)
+## Local signed builds
 
 Create `keystore.properties` in the repo root (gitignored):
 

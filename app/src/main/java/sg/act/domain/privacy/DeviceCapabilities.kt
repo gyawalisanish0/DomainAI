@@ -77,6 +77,24 @@ class DeviceCapabilities(context: Context) {
     }
 
     /**
+     * Prompt-batch size (N_BATCH / N_UBATCH) for llama.cpp, scaled to device RAM.
+     * Larger batches process the prompt faster (fewer decode passes) but consume
+     * proportionally more memory during prefill. The same thresholds apply to the
+     * HF Space backend so both sides use consistent values.
+     *
+     *   < 8 GB  → 512   (budget/mid-range phones, current default)
+     *   8–16 GB → 1024  (flagship phones / entry Space hardware)
+     *   16–32 GB→ 2048  (mid-range Space)
+     *   32 GB+  → 4096  (high-memory Space / server)
+     */
+    fun recommendedBatchSize(): Int = when {
+        totalRamMb < 8_000 -> 512
+        totalRamMb < 16_000 -> 1024
+        totalRamMb < 32_000 -> 2048
+        else -> 4096
+    }
+
+    /**
      * Context length to request for on-device inference, scaled to device memory.
      * Larger contexts cost RAM (the KV cache grows with n_ctx), so budget phones
      * get a smaller window. The native side further clamps this to the model's
