@@ -36,7 +36,31 @@ object CpuFeatures {
     /** `HWCAP_ASIMDDP`: the ARM dot-product extension (`sdot`/`udot`). */
     private const val HWCAP_ASIMDDP = 1L shl 20
 
+    /**
+     * Every bit AT_HWCAP defines for AArch64, per the kernel's
+     * `arch/arm64/include/uapi/asm/hwcap.h` — for the debug log only. Decoding
+     * the whole word rather than just the one bit this app cares about means a
+     * single log line is enough to tell a real ARMv8.0 CPU (a short, plausible
+     * list ending around `asimdrdm`) apart from a parsing bug (an empty or
+     * nonsensical list) without needing a second round trip to ask for more.
+     */
+    private val KNOWN_BITS = listOf(
+        0 to "fp", 1 to "asimd", 2 to "evtstrm", 3 to "aes", 4 to "pmull",
+        5 to "sha1", 6 to "sha2", 7 to "crc32", 8 to "atomics", 9 to "fphp",
+        10 to "asimdhp", 11 to "cpuid", 12 to "asimdrdm", 13 to "jscvt",
+        14 to "fcma", 15 to "lrcpc", 16 to "dcpop", 17 to "sha3", 18 to "sm3",
+        19 to "sm4", 20 to "asimddp", 21 to "sha512", 22 to "sve",
+        23 to "asimdfhm", 24 to "dit", 25 to "uscat", 26 to "ilrcpc",
+        27 to "flagm", 28 to "ssbs", 29 to "sb", 30 to "paca", 31 to "pacg",
+    )
+
     private const val TAG = "CpuFeatures"
+
+    /** Render a hwcap bitmask as space-separated feature names, for logging. */
+    fun decodeHwcap(hwcap: Long): String =
+        KNOWN_BITS.filter { (bit, _) -> (hwcap shr bit) and 1L != 0L }
+            .joinToString(" ") { (_, name) -> name }
+            .ifEmpty { "(none)" }
 
     /**
      * Pull `AT_HWCAP` out of a `/proc/self/auxv` image, or null when it isn't
@@ -82,8 +106,10 @@ object CpuFeatures {
         val supported = hasDotprod(auxv)
         Log.i(
             TAG,
-            "AT_HWCAP=" + (hwcap?.let { "0x" + java.lang.Long.toHexString(it) } ?: "absent") +
-                " dotprod=" + supported,
+            "auxv=${auxv.size}B AT_HWCAP=" +
+                (hwcap?.let { "0x" + java.lang.Long.toHexString(it) } ?: "absent") +
+                " [" + (hwcap?.let(::decodeHwcap) ?: "n/a") + "]" +
+                " dotprod=$supported",
         )
         supported
     }.getOrElse {

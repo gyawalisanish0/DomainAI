@@ -87,4 +87,29 @@ class CpuFeaturesTest {
         val image = auxv(AT_HWCAP to HWCAP_WITH_DP, AT_HWCAP to 0L, AT_NULL to 0L)
         assertEquals(HWCAP_WITH_DP, CpuFeatures.hwcapFrom(image))
     }
+
+    @Test
+    fun `decodes a plausible ARMv8_2 feature list`() {
+        // fp, asimd, aes, pmull, sha1, sha2, crc32, atomics, fphp, asimdhp,
+        // cpuid, asimdrdm, asimddp — the set a real dotprod-capable Cortex-A
+        // core reports, in kernel bit order.
+        val decoded = CpuFeatures.decodeHwcap(HWCAP_WITH_DP)
+        assertEquals(
+            "fp asimd evtstrm aes pmull sha1 sha2 crc32 atomics fphp asimdhp " +
+                "cpuid asimdrdm jscvt fcma lrcpc dcpop sha3 sm3 sm4 asimddp",
+            decoded,
+        )
+    }
+
+    @Test
+    fun `decodes zero as an explicit empty list, not a blank string`() {
+        assertEquals("(none)", CpuFeatures.decodeHwcap(0L))
+    }
+
+    @Test
+    fun `decodes a single high bit correctly`() {
+        // Bit 31 exercises the Long-shift path at the top of the word, where an
+        // Int-based implementation would have hit sign-extension trouble.
+        assertEquals("pacg", CpuFeatures.decodeHwcap(1L shl 31))
+    }
 }
