@@ -3,6 +3,7 @@ package sg.act.domain.ui.settings
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
@@ -48,11 +49,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.res.dimensionResource
 import androidx.compose.ui.res.integerResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.core.content.ContextCompat
@@ -60,6 +64,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import sg.act.domain.BuildConfig
 import sg.act.domain.R
 import sg.act.domain.core.Diagnostics
+import sg.act.domain.core.SystemInfo
 import sg.act.domain.inference.ModelManager
 import sg.act.domain.inference.ModelProfile
 import sg.act.domain.inference.ModelSpec
@@ -239,6 +244,13 @@ fun SettingsScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
 
+            HorizontalDivider()
+            SectionTitle(stringResource(R.string.settings_section_system))
+            SystemInfoSection(
+                info = state.systemInfo,
+                onRefresh = viewModel::refreshSystemInfo,
+            )
+
             // Debug builds only: export the app's own logcat to the share sheet.
             if (BuildConfig.DEBUG) {
                 HorizontalDivider()
@@ -260,6 +272,224 @@ fun SettingsScreen(
 private fun SectionTitle(text: String) {
     Text(text, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
 }
+
+/**
+ * Settings → System info: what the app detected and how it decided to run.
+ *
+ * Collapsed by default — it is a diagnostic panel, not a daily control — and
+ * re-sampled on expand, because thermal status and free memory are exactly the
+ * values that are stale by the time anyone looks.
+ */
+@Composable
+private fun SystemInfoSection(
+    info: SystemInfo?,
+    onRefresh: () -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
+
+    Text(
+        stringResource(R.string.system_summary),
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable {
+                expanded = !expanded
+                if (expanded) onRefresh()
+            }
+            .padding(vertical = dimensionResource(R.dimen.space_xs)),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Text(
+            info?.device ?: stringResource(R.string.system_value_unknown),
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        Icon(
+            if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+            contentDescription = null,
+        )
+    }
+
+    if (!expanded || info == null) return
+
+    Column(verticalArrangement = Arrangement.spacedBy(dimensionResource(R.dimen.space_xs))) {
+        InfoGroup(stringResource(R.string.system_group_device))
+        InfoRow(stringResource(R.string.system_row_model), info.device)
+        InfoRow(stringResource(R.string.system_row_android), info.android)
+        InfoRow(stringResource(R.string.system_row_abi), info.abi)
+        InfoRow(stringResource(R.string.system_row_app), info.appVersion)
+
+        InfoGroup(stringResource(R.string.system_group_cpu))
+        InfoRow(stringResource(R.string.system_row_cores), info.cores.toString())
+        InfoRow(
+            stringResource(R.string.system_row_dotprod),
+            when (info.hasDotprod) {
+                true -> stringResource(R.string.system_value_yes)
+                false -> stringResource(R.string.system_value_no)
+                null -> stringResource(R.string.system_value_unknown)
+            },
+        )
+        // The full hwcap word, not just the bit the app cares about: a short,
+        // plausible list distinguishes an older CPU from a parsing bug.
+        InfoRow(
+            label = stringResource(R.string.system_row_features),
+            value = listOfNotNull(info.hwcapHex, info.cpuFeatures)
+                .joinToString("\n")
+                .ifEmpty { stringResource(R.string.system_value_unknown) },
+            wide = true,
+        )
+
+        InfoGroup(stringResource(R.string.system_group_engine))
+        // ggml's own build line. This is the honest answer to "does the shipped
+        // engine contain dot-product kernels?" — it reports compile flags, so a
+        // DOTPROD = 0 here holds no matter what the CPU above can do.
+        InfoRow(
+            label = stringResource(R.string.system_row_build),
+            value = info.engineBuildFeatures.ifEmpty { stringResource(R.string.system_value_pending) },
+            wide = true,
+        )
+        InfoRow(
+            label = stringResource(R.string.system_row_backends),
+            value = info.backends.ifEmpty { stringResource(R.string.system_value_pending) },
+            wide = true,
+        )
+
+        InfoGroup(stringResource(R.string.system_group_memory))
+        InfoRow(
+            stringResource(R.string.system_row_ram),
+            stringResource(
+                R.string.system_ram_value,
+                formatMegabytes(info.availableRamMb),
+                formatMegabytes(info.totalRamMb),
+            ),
+        )
+        InfoRow(stringResource(R.string.system_row_thermal), info.thermal)
+        InfoRow(
+            stringResource(R.string.system_row_power_save),
+            stringResource(
+                if (info.powerSaveMode) R.string.system_value_on else R.string.system_value_off,
+            ),
+        )
+
+        InfoGroup(stringResource(R.string.system_group_plan))
+        InfoRow(
+            stringResource(R.string.system_row_threads),
+            planValue(
+                effective = info.effectiveThreads,
+                userChosen = info.threadsUserChosen,
+                max = info.plan.maxThreads,
+            ),
+        )
+        InfoRow(
+            stringResource(R.string.system_row_context),
+            planValue(
+                effective = info.effectiveContextTokens,
+                userChosen = info.contextUserChosen,
+                max = info.plan.maxContextTokens,
+                suffix = stringResource(R.string.system_tokens_suffix),
+            ),
+        )
+        InfoRow(stringResource(R.string.system_row_batch), info.plan.batchSize.toString())
+        // The point of the panel: when the plan is smaller than the hardware would
+        // allow, say which live condition shrank it rather than looking broken.
+        InfoRow(
+            label = stringResource(R.string.system_row_constraints),
+            value = info.plan.constraints
+                .joinToString(", ") { it.label }
+                .ifEmpty { stringResource(R.string.system_value_none) },
+            wide = true,
+        )
+
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(dimensionResource(R.dimen.space_s)),
+            modifier = Modifier.padding(top = dimensionResource(R.dimen.space_xs)),
+        ) {
+            OutlinedButton(onClick = {
+                clipboard.setText(AnnotatedString(info.report()))
+                // Android 13+ shows its own copy confirmation; a toast would double it.
+                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+                    Toast.makeText(context, R.string.system_info_copied, Toast.LENGTH_SHORT).show()
+                }
+            }) {
+                Text(stringResource(R.string.action_copy_system_info))
+            }
+            TextButton(onClick = onRefresh) {
+                Text(stringResource(R.string.action_refresh_system_info))
+            }
+        }
+    }
+}
+
+@Composable
+private fun InfoGroup(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.labelLarge,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(top = dimensionResource(R.dimen.space_s)),
+    )
+}
+
+/**
+ * One label/value pair. [wide] stacks the value under the label instead of
+ * sharing the row, for the long multi-word values (feature lists, backend
+ * strings) that would otherwise wrap into a narrow column.
+ */
+@Composable
+private fun InfoRow(label: String, value: String, wide: Boolean = false) {
+    if (wide) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Text(
+                label,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(value, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
+        }
+    } else {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(dimensionResource(R.dimen.space_s)),
+        ) {
+            Text(
+                label,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f),
+            )
+            Text(value, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1.4f))
+        }
+    }
+}
+
+/** "4 (Auto) · max 6" — the effective value, where it came from, and the ceiling. */
+@Composable
+private fun planValue(
+    effective: Int,
+    userChosen: Boolean,
+    max: Int,
+    suffix: String? = null,
+): String {
+    val head = stringResource(
+        if (userChosen) R.string.system_chosen_value else R.string.system_auto_value,
+        effective,
+    )
+    val withSuffix = if (suffix != null) "$head $suffix" else head
+    return "$withSuffix · " + stringResource(R.string.system_max_suffix, max)
+}
+
+/** MB as MB below a gigabyte, GB with one decimal above it. */
+private fun formatMegabytes(mb: Long): String =
+    if (mb < 1024) {
+        "$mb MB"
+    } else {
+        String.format(Locale.US, "%.1f GB", mb / 1024.0)
+    }
 
 @Composable
 private fun SwitchRow(

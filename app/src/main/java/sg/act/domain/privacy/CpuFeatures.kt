@@ -101,24 +101,31 @@ object CpuFeatures {
     }
 
     /**
+     * This device's `AT_HWCAP`, or null when it can't be determined — either the
+     * file was unreadable or the entry was absent. Callers that need a decision
+     * rather than a value should treat null as "unknown", never as "no features".
+     */
+    fun deviceHwcap(): Long? = runCatching {
+        hwcapFrom(File("/proc/self/auxv").readBytes())
+    }.getOrElse {
+        Log.w(TAG, "Could not read /proc/self/auxv", it)
+        null
+    }
+
+    /**
      * Read the live auxv; assumes capable if it can't be read. The resolved
      * bitmask is logged so a misfire is diagnosable from a bug report rather than
      * needing a guess about the device.
      */
-    fun deviceHasDotprod(): Boolean = runCatching {
-        val auxv = File("/proc/self/auxv").readBytes()
-        val hwcap = hwcapFrom(auxv)
-        val supported = hasDotprod(auxv)
+    fun deviceHasDotprod(): Boolean {
+        val hwcap = deviceHwcap()
+        val supported = hwcap == null || (hwcap and HWCAP_ASIMDDP) != 0L
         Log.i(
             TAG,
-            "auxv=${auxv.size}B AT_HWCAP=" +
-                (hwcap?.let { "0x" + java.lang.Long.toHexString(it) } ?: "absent") +
+            "AT_HWCAP=" + (hwcap?.let { "0x" + java.lang.Long.toHexString(it) } ?: "unknown") +
                 " [" + (hwcap?.let(::decodeHwcap) ?: "n/a") + "]" +
                 " dotprod=$supported",
         )
-        supported
-    }.getOrElse {
-        Log.w(TAG, "Could not read /proc/self/auxv; assuming dotprod is supported", it)
-        true
+        return supported
     }
 }

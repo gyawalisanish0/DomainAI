@@ -18,13 +18,16 @@ import sg.act.domain.inference.OpenRouterClient
 import sg.act.domain.inference.ProviderType
 import sg.act.domain.inference.RemoteEngine
 import sg.act.domain.inference.SpaceClient
+import sg.act.domain.core.SystemInfo
 import sg.act.domain.privacy.DeviceCapabilities
 import sg.act.domain.privacy.PrivacyState
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 /** A catalog model annotated with whether this device can comfortably run it. */
@@ -75,13 +78,15 @@ data class SettingsUiState(
     // Provider validation (round-trip check before saving)
     val providerValidating: Boolean = false,
     val providerError: String? = null,
+    /** Settings -> System info. Null until the first sample completes. */
+    val systemInfo: SystemInfo? = null,
 )
 
 class SettingsViewModel(
     private val application: Application,
     private val repository: ChatRepository,
     private val modelManager: ModelManager,
-    deviceCapabilities: DeviceCapabilities,
+    private val deviceCapabilities: DeviceCapabilities,
     private val profileStore: ModelProfileStore,
     private val openRouter: OpenRouterClient = OpenRouterClient(),
     private val spaceClient: SpaceClient = SpaceClient(),
@@ -116,7 +121,13 @@ class SettingsViewModel(
             .onEach { _ui.value = _ui.value.copy(privacy = it) }
             .launchIn(viewModelScope)
         modelManager.state
-            .onEach { _ui.value = _ui.value.copy(modelState = it) }
+            .onEach {
+                _ui.value = _ui.value.copy(modelState = it)
+                // A finished load may have landed on different numbers than the
+                // panel last sampled (the ladder steps GPU layers down, and free
+                // memory moves), so re-sample when the model state settles.
+                refreshSystemInfo()
+            }
             .launchIn(viewModelScope)
         modelManager.transfer
             .onEach { _ui.value = _ui.value.copy(transfer = it) }
@@ -130,6 +141,41 @@ class SettingsViewModel(
         profileStore.activeProfileId
             .onEach { _ui.value = _ui.value.copy(activeProfileId = it) }
             .launchIn(viewModelScope)
+        // The engine's build-feature and backend lines are only populated once the
+        // native library has initialized, which otherwise waits for a model load —
+        // so a device with no model installed would show blanks in the one panel
+        // meant to explain why.
+        refreshSystemInfo()
+    }
+
+    /**
+     * Re-sample [SystemInfo]. Cheap (a few system reads and a pure plan), and
+     * worth doing on every visit: thermal status and free memory are exactly the
+     * values a user opens this panel to check.
+     */
+    fun refreshSystemInfo() = viewModelScope.launch(Dispatchers.Default) {
+        // Only queue work on the native run loop when the engine hasn't come up
+        // yet: that thread also runs generation, so an unconditional hop would
+        // make this refresh wait out a reply in flight. A failure to initialize is
+        // itself reportable — leave the fields empty rather than taking the VM down.
+        if (modelManager.engineBuildFeatures().isEmpty()) {
+            runCatching { modelManager.ensureEngineInitialized() }
+        }
+        val info = SystemInfo.collect(deviceCapabilities, modelManager)
+        // `update` rather than a copy-assign: this runs off the main thread, where
+        // a read-modify-write would race the collectors above.
+        _ui.update {
+            it.copy(
+                systemInfo = info,
+                // The Auto labels and the selectable presets come from the same
+                // plan, so they follow a phone that has heated up or freed memory
+                // instead of quoting process-start values all session.
+                contextOptions = modelManager.contextOptions(),
+                threadOptions = modelManager.threadOptions(),
+                effectiveContextTokens = info.effectiveContextTokens,
+                effectiveThreads = info.effectiveThreads,
+            )
+        }
     }
 
     fun setKillSwitch(enabled: Boolean) = viewModelScope.launch {

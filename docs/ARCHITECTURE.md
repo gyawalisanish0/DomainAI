@@ -186,6 +186,41 @@ because it is the input per-tier dispatch would need, and because it answers "do
 this phone have dotprod?" from a bug report rather than a guess. The parse is pure
 and unit-tested, and assumes capable when the vector is unreadable.
 
+### The adaptive plan
+
+Thread count, context length and prompt batch size are not constants and are not
+fixed at startup. `Adaptive.plan(DeviceSnapshot)` derives all three, and
+`ModelManager` holds a **plan provider** (`() -> AdaptivePlan`) that it calls afresh
+at each load. The snapshot carries total RAM, **free** RAM, the low-RAM-device flag,
+core count, `PowerManager.getCurrentThermalStatus()` and battery-saver state.
+
+`Adaptive` is a pure object over plain data — no Android types — so the whole policy
+is unit-tested on the JVM, including an exhaustive sweep asserting its invariants
+(Auto never exceeds its own ceiling, threads never fall below two, the batch never
+goes under its floor).
+
+Two rules, and the split between them is the design:
+
+| Live condition | Effect |
+|----------------|--------|
+| Free memory, low-RAM flag | Moves the **ceilings** — clamps an explicit user choice too, because a context free RAM can't back doesn't load |
+| Thermal throttling, battery saver | Biases **Auto only** — both are transient, and a user who typed 6 threads knowing the phone runs warm keeps 6 |
+
+A plan carries the `Constraint`s that shaped it, which is what makes this legible
+rather than mysterious: Settings → System info shows the plan next to the readings it
+came from and names the condition that scaled it back. That panel also surfaces
+`CpuFeatures`' decoded hwcap, ggml's own build-feature line
+(`llama_print_system_info()`, i.e. which kernels the shipped binary actually
+contains) and the registered backends — the three questions that previously took a
+logcat capture to answer. `SystemInfo.report()` renders it as un-localized plain text
+for the clipboard.
+
+One value deliberately does **not** come from the plan: `effectiveContextTokens()`
+returns the window the loaded native context was actually opened with, falling back
+to the planned value only when nothing is loaded. `ChatRepository` budgets history
+against it, and re-planning between loads must not leave that budget quoting a window
+the context doesn't have.
+
 ### Streaming
 
 `InferenceEngine.generate` returns `Flow<String>`. `PrivacyRouter` decides

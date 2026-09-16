@@ -27,7 +27,8 @@ strips sensitive information before anything is sent.
 - **GPU acceleration** with an in-app CPU-vs-GPU benchmark, and a **configurable context window**.
 - **Self-hosted Space backend** — deploy `backend/` as a Hugging Face Docker Space to run a llama.cpp model you control. Browse a curated model catalog from the app, load models on demand with live download progress, and use it as a private cloud backend. Supports team mode (one Space, multiple clients) and community forking.
 - **OpenRouter free-model picker** — connect to free OpenRouter models with one tap.
-- **Adaptive performance** — inference threads, context length, and prompt-prefill batch size all scale to your device's hardware at startup; all three are user-configurable.
+- **Adaptive performance** — inference threads, context length, and prompt-prefill batch size are re-decided at every model load against the phone's live state: free memory, thermal throttling and battery saver, not just total RAM. All three remain user-configurable.
+- **System info panel** — Settings shows what the app detected (CPU features, engine build flags, loaded backends, memory, thermal state) and the plan it chose, with the reason it was scaled back. One tap copies it for a bug report.
 
 ## Tech stack
 

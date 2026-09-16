@@ -2,11 +2,20 @@ package sg.act.domain.privacy
 
 import android.app.ActivityManager
 import android.content.Context
+import android.os.Build
+import android.os.PowerManager
+import sg.act.domain.inference.Adaptive
+import sg.act.domain.inference.AdaptivePlan
+import sg.act.domain.inference.DeviceSnapshot
 
 /**
- * Reads the device's memory profile so the UI can recommend an on-device model
- * the phone can actually run — rather than shipping a one-size default that OOMs
- * on budget hardware.
+ * The device's live capability readings: what the UI needs to recommend a model
+ * the phone can actually run, and what [Adaptive] needs to size each load.
+ *
+ * Fixed properties ([totalRamMb], [coresBySpeed]) are probed once, since CPU
+ * topology and physical RAM don't change. Everything else is read on demand:
+ * free memory, thermal status and battery saver all move while the app is open,
+ * and a plan derived once at startup would still be quoting them hours later.
  */
 class DeviceCapabilities(context: Context) {
 
@@ -15,36 +24,59 @@ class DeviceCapabilities(context: Context) {
     private val activityManager =
         context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
 
-    val totalRamMb: Long = ActivityManager.MemoryInfo().also {
-        activityManager.getMemoryInfo(it)
-    }.totalMem / (1024 * 1024)
+    private val powerManager =
+        context.getSystemService(Context.POWER_SERVICE) as PowerManager
+
+    val totalRamMb: Long = memoryInfo().totalMem / BYTES_PER_MB
 
     val isLowRam: Boolean = activityManager.isLowRamDevice
 
-    private val cpuProfile = computeCpuProfile()
+    /** RAM the system reports available right now, MB. */
+    fun availableRamMb(): Long = memoryInfo().availMem / BYTES_PER_MB
 
     /**
-     * Device-adaptive **Auto** thread count, probed **once** at startup (CPU topology
-     * is fixed). A deliberate **middle ground**: roughly **half** the cores, so
-     * generation gets a solid share of the CPU while the rest stays free for the UI
-     * and system. Bounded to `2..6`. On an 8-core phone this yields 4; smaller CPUs
-     * scale down. The user can raise it (up to [maxThreads]) in Settings / the chat
-     * quick-panel.
+     * Current thermal throttling level (`PowerManager.THERMAL_STATUS_*`), or
+     * [DeviceSnapshot.THERMAL_UNKNOWN] below API 29 where there is no such API.
      */
-    val recommendedThreads: Int = cpuProfile.first
+    fun thermalStatus(): Int =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            runCatching { powerManager.currentThermalStatus }
+                .getOrDefault(DeviceSnapshot.THERMAL_UNKNOWN)
+        } else {
+            DeviceSnapshot.THERMAL_UNKNOWN
+        }
 
-    /** Largest thread count the user may select on this device: `2..min(6, cores)`. */
-    val maxThreads: Int = minOf(6, Runtime.getRuntime().availableProcessors()).coerceAtLeast(2)
+    /** Whether battery saver is on. */
+    fun powerSaveMode(): Boolean = runCatching { powerManager.isPowerSaveMode }.getOrDefault(false)
+
+    /** Everything [Adaptive] reasons about, sampled now. */
+    fun snapshot(): DeviceSnapshot = DeviceSnapshot(
+        totalRamMb = totalRamMb,
+        availableRamMb = availableRamMb(),
+        isLowRamDevice = isLowRam,
+        cores = Runtime.getRuntime().availableProcessors(),
+        thermalStatus = thermalStatus(),
+        powerSaveMode = powerSaveMode(),
+    )
 
     /**
-     * All core indices ordered **fastest first** (empty if `/sys` is unreadable). The
-     * inference threadpool pins to the first `effectiveThreads` of these, so picking a
-     * smaller thread count naturally keeps generation on the primary/big cores.
-     * Pinning is best-effort — Android's cpuset/EAS scheduler may override it.
+     * The inference plan for this moment. Call it at each model load rather than
+     * caching it — that re-evaluation is the whole point.
      */
-    val coresBySpeed: IntArray = cpuProfile.second
+    fun plan(): AdaptivePlan = Adaptive.plan(snapshot())
 
-    private fun computeCpuProfile(): Pair<Int, IntArray> {
+    /**
+     * All core indices ordered **fastest first** (empty if `/sys` is unreadable).
+     * The inference threadpool pins to the first `threads` of these, so a smaller
+     * thread count naturally keeps generation on the primary/big cores. Pinning is
+     * best-effort — Android's cpuset/EAS scheduler may override it.
+     */
+    val coresBySpeed: IntArray = computeCoresBySpeed()
+
+    private fun memoryInfo(): ActivityManager.MemoryInfo =
+        ActivityManager.MemoryInfo().also { activityManager.getMemoryInfo(it) }
+
+    private fun computeCoresBySpeed(): IntArray {
         val total = Runtime.getRuntime().availableProcessors().coerceAtLeast(1)
         val freqs: List<Long?> = (0 until total).map { cpu ->
             runCatching {
@@ -52,17 +84,8 @@ class DeviceCapabilities(context: Context) {
                     .readText().trim().toLong()
             }.getOrNull()
         }
-        val haveFreqs = freqs.all { it != null }
-        // Auto = a middle-ground count: about half the cores, so generation gets a
-        // solid share of the CPU while the rest stays free for the UI/system. Bounded
-        // to 2..6 (an 8-core phone lands on 4; the user can raise it in Settings).
-        val threads = (total / 2).coerceIn(2, minOf(total, 6))
-        val sorted = if (haveFreqs) {
-            (0 until total).sortedByDescending { freqs[it]!! }.toIntArray()
-        } else {
-            IntArray(0)
-        }
-        return threads to sorted
+        if (freqs.any { it == null }) return IntArray(0)
+        return (0 until total).sortedByDescending { freqs[it]!! }.toIntArray()
     }
 
     /**
@@ -76,45 +99,7 @@ class DeviceCapabilities(context: Context) {
         else -> Suitability.RECOMMENDED
     }
 
-    /**
-     * Prompt-batch size (N_BATCH / N_UBATCH) for llama.cpp, scaled to device RAM.
-     * Larger batches process the prompt faster (fewer decode passes) but consume
-     * proportionally more memory during prefill. The same thresholds apply to the
-     * HF Space backend so both sides use consistent values.
-     *
-     *   < 8 GB  → 512   (budget/mid-range phones, current default)
-     *   8–16 GB → 1024  (flagship phones / entry Space hardware)
-     *   16–32 GB→ 2048  (mid-range Space)
-     *   32 GB+  → 4096  (high-memory Space / server)
-     */
-    fun recommendedBatchSize(): Int = when {
-        totalRamMb < 8_000 -> 512
-        totalRamMb < 16_000 -> 1024
-        totalRamMb < 32_000 -> 2048
-        else -> 4096
-    }
-
-    /**
-     * Context length to request for on-device inference, scaled to device memory.
-     * Larger contexts cost RAM (the KV cache grows with n_ctx), so budget phones
-     * get a smaller window. The native side further clamps this to the model's
-     * trained context.
-     */
-    fun recommendedContextTokens(): Int = when {
-        isLowRam || totalRamMb < 3_000 -> 2048
-        totalRamMb < 6_000 -> 4096
-        else -> 8192
-    }
-
-    /**
-     * The largest context length the user may select on this device. Roughly 2x the
-     * recommended size: enough headroom to be useful, while still bounding the KV
-     * cache so a high preset can't OOM a budget phone. The native side additionally
-     * clamps any request to the model's trained context.
-     */
-    fun maxAllowedContextTokens(): Int = when {
-        isLowRam || totalRamMb < 3_000 -> 4096
-        totalRamMb < 6_000 -> 8192
-        else -> 16384
+    private companion object {
+        const val BYTES_PER_MB = 1024L * 1024L
     }
 }

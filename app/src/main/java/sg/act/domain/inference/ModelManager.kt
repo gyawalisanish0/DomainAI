@@ -46,18 +46,18 @@ class ModelManager(
     private val modelStore: ModelStore,
     private val modelStorage: ModelStorage,
     private val scope: CoroutineScope,
-    /** Context length used for "Auto" — the device-recommended size. */
-    private val deviceRecommendedContext: Int,
-    /** Largest context the user may pick on this device (bounds the presets). */
-    private val deviceMaxContext: Int,
-    /** Thread count used for "Auto" — the device-adaptive recommendation. */
-    private val deviceAutoThreads: Int,
-    /** Largest thread count the user may pick on this device (bounds the presets). */
-    private val deviceMaxThreads: Int,
+    /**
+     * The device's current inference plan — Auto thread/context values, the
+     * ceilings the user may pick within, and the prompt batch size.
+     *
+     * A **provider, not a value**, because free memory, thermal state and battery
+     * saver all change while the app is open. It is called afresh at each load (and
+     * whenever the UI shows its numbers), so a phone that has since cooled down or
+     * freed memory gets the larger plan without a restart.
+     */
+    private val plan: () -> AdaptivePlan,
     /** All core indices ordered fastest-first; the threadpool pins to the first N. */
     private val coresBySpeed: IntArray,
-    /** Prompt batch size passed to llama.cpp; larger = faster prefill, more RAM. */
-    private val deviceRecommendedBatchSize: Int = 512,
     /** User's context-length choice (0 = Auto). Read at each load. */
     private val contextSettings: ContextSettings,
     /** User's thread-count choice (0 = Auto). Read at each load. */
@@ -114,6 +114,14 @@ class ModelManager(
 
     @Volatile
     private var backend: LlamaCppBackend? = null
+
+    /**
+     * The context length the native context was actually opened with, or null when
+     * nothing is loaded. Held because the plan is re-sampled between loads and
+     * history budgeting must follow the window that exists, not the next one.
+     */
+    @Volatile
+    private var loadedContextTokens: Int? = null
 
     @Volatile
     private var downloadJob: Job? = null
@@ -202,6 +210,7 @@ class ModelManager(
         if (modelStore.load()?.fileName == fileName) {
             llama.unload()
             backend = null
+            loadedContextTokens = null
             modelStore.clear()
             _state.value = State.NotLoaded
         }
@@ -334,13 +343,23 @@ class ModelManager(
     /** The user's chosen context length (0 = Auto). */
     fun contextTokens(): Int = contextSettings.chosenTokens()
 
-    /** Selectable context-length presets allowed on this device. */
-    fun contextOptions(): List<Int> = CONTEXT_PRESETS.filter { it <= deviceMaxContext }
+    /** Selectable context-length presets allowed on this device, right now. */
+    fun contextOptions(): List<Int> = CONTEXT_PRESETS.filter { it <= plan().maxContextTokens }
 
-    /** The context length that will actually be requested: chosen, or device Auto. */
-    fun effectiveContextTokens(): Int {
+    /**
+     * The context length in force: what the loaded model was actually opened with,
+     * or — with nothing loaded — what the next load would request.
+     *
+     * Preferring the loaded value matters because [ChatRepository][sg.act.domain.data.repository.ChatRepository]
+     * budgets history against this. Re-planning between loads must not leave the
+     * budget quoting a window the native context doesn't have.
+     */
+    fun effectiveContextTokens(): Int = loadedContextTokens ?: plannedContextTokens(plan())
+
+    /** Context length the next load would request, given [p]. */
+    private fun plannedContextTokens(p: AdaptivePlan): Int {
         val chosen = contextSettings.chosenTokens()
-        return if (chosen > 0) chosen.coerceAtMost(deviceMaxContext) else deviceRecommendedContext
+        return if (chosen > 0) chosen.coerceAtMost(p.maxContextTokens) else p.autoContextTokens
     }
 
     /** Set the context length (0 = Auto) and reload the active model so it applies. */
@@ -353,13 +372,35 @@ class ModelManager(
     fun threadCount(): Int = threadSettings.chosenThreads()
 
     /** Selectable thread-count presets allowed on this device (2..max). */
-    fun threadOptions(): List<Int> = (2..deviceMaxThreads).toList()
+    fun threadOptions(): List<Int> = (Adaptive.MIN_THREADS..plan().maxThreads).toList()
 
-    /** The thread count that will actually be used: chosen, or device Auto. */
-    fun effectiveThreads(): Int {
+    /** The thread count that will actually be used: chosen, or adaptive Auto. */
+    fun effectiveThreads(): Int = plannedThreads(plan())
+
+    /** Thread count the next load would use, given [p]. */
+    private fun plannedThreads(p: AdaptivePlan): Int {
         val chosen = threadSettings.chosenThreads()
-        return if (chosen > 0) chosen.coerceIn(2, deviceMaxThreads) else deviceAutoThreads
+        return if (chosen > 0) chosen.coerceIn(Adaptive.MIN_THREADS, p.maxThreads) else p.autoThreads
     }
+
+    /**
+     * The device's plan as of now, for the Settings system-info panel. Sampled on
+     * call, so it reflects the phone's current thermal and memory state.
+     */
+    fun currentPlan(): AdaptivePlan = plan()
+
+    /** ggml's registered backends, e.g. `"CPU [CPU]; Vulkan0 [GPU] Adreno 610"`. */
+    fun backendInfo(): String = llama.backendInfo()
+
+    /** ggml's build-time CPU feature line (what the shipped engine can emit). */
+    fun engineBuildFeatures(): String = llama.systemInfo()
+
+    /**
+     * Make sure the native engine has initialized, so [backendInfo] and
+     * [engineBuildFeatures] have something to report even when no model has been
+     * loaded this session.
+     */
+    suspend fun ensureEngineInitialized() = llama.ensureInitialized()
 
     /** Set the thread count (0 = Auto) and reload the active model so it applies. */
     fun setThreadCount(count: Int) {
@@ -390,6 +431,7 @@ class ModelManager(
     suspend fun unload() = mutex.withLock {
         llama.unload()
         backend = null
+        loadedContextTokens = null
         modelStore.clear()
         _state.value = State.NotLoaded
         refreshInstalled()
@@ -458,8 +500,14 @@ class ModelManager(
     ): Throwable? = try {
         llama.unload() // free any prior/partial context first (no-op if none)
         backend = null
+        loadedContextTokens = null
         gpuGuard.beginAttempt(gpuLayers)
-        val threads = effectiveThreads()
+        // One plan sample for the whole attempt: threads, context and batch have to
+        // agree with each other, which they wouldn't if each re-read a phone whose
+        // free memory moved in between.
+        val p = plan()
+        val threads = plannedThreads(p)
+        val contextTokens = plannedContextTokens(p)
         // Pin to the fastest `threads` cores so generation stays on the big cluster;
         // empty when /sys was unreadable, in which case the native side skips pinning.
         val affinity = if (coresBySpeed.isNotEmpty()) {
@@ -467,8 +515,13 @@ class ModelManager(
         } else {
             IntArray(0)
         }
-        llama.load(path, effectiveContextTokens(), gpuLayers, threads, affinity, deviceRecommendedBatchSize)
+        sg.act.domain.core.CrashReporting.log(
+            "Adaptive plan: threads=$threads ctx=$contextTokens batch=${p.batchSize}" +
+                " constraints=${p.constraints.joinToString(",").ifEmpty { "none" }}",
+        )
+        llama.load(path, contextTokens, gpuLayers, threads, affinity, p.batchSize)
         gpuGuard.endAttempt()
+        loadedContextTokens = contextTokens
         backend = LlamaCppBackend(displayName, llama)
         val hasGpuDevice = llama.backendInfo().contains("[GPU]")
         val detail = when {
@@ -483,6 +536,7 @@ class ModelManager(
     } catch (e: Exception) {
         gpuGuard.endAttempt() // threw (didn't abort the process) — not a driver crash
         backend = null
+        loadedContextTokens = null
         e
     }
 

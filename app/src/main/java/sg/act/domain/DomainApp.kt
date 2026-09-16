@@ -53,12 +53,10 @@ class AppContainer(app: DomainApp) {
         modelStore = ModelStore(app),
         modelStorage = ModelStorage(app),
         scope = appScope,
-        deviceRecommendedContext = deviceCapabilities.recommendedContextTokens(),
-        deviceMaxContext = deviceCapabilities.maxAllowedContextTokens(),
-        deviceAutoThreads = deviceCapabilities.recommendedThreads,
-        deviceMaxThreads = deviceCapabilities.maxThreads,
+        // A provider, so each load re-reads the phone's current memory/thermal
+        // state instead of replaying a plan made at process start.
+        plan = deviceCapabilities::plan,
         coresBySpeed = deviceCapabilities.coresBySpeed,
-        deviceRecommendedBatchSize = deviceCapabilities.recommendedBatchSize(),
         contextSettings = ContextSettings(app),
         threadSettings = ThreadSettings(app),
         gpuGuard = GpuGuard(app),

@@ -26,6 +26,20 @@ All notable changes to Domain AI are documented here. This project adheres to
   ISA baseline was tried during this cycle and reverted — see *Internal*.
 
 ### Added
+- **Inference settings now adapt continuously, not once at startup.** Auto thread
+  count, context length and prompt batch size are re-decided at every model load from
+  the phone's live state — free memory rather than just total RAM, plus thermal
+  throttling and battery saver. An 8 GB phone with 500 MB free is treated as a small
+  device; a throttling SoC gets fewer threads, because workers stalled on a hot core
+  add contention without adding tokens. Memory pressure moves the ceilings (it clamps
+  an explicit choice too, since a context free RAM can't back won't load); thermal and
+  battery saver only bias Auto, so a thread count you picked yourself is kept.
+- **System info in Settings.** What the app detected about your device and how it
+  decided to run: CPU cores and the decoded feature list (including whether the chip
+  has dot product), the inference engine's own build flags and loaded backends, total
+  and free memory, thermal and battery-saver state, and the plan in force — with the
+  reason it was scaled back, when it was. One tap copies the lot as plain text for a
+  bug report.
 - **Regenerate a reply.** Every finished reply carries a regenerate control: the answer
   is discarded and the same question is asked again. Routing is decided afresh, so
   regenerating after switching profile, model, context length or threads uses the new
@@ -44,6 +58,12 @@ All notable changes to Domain AI are documented here. This project adheres to
   model, covered by JVM unit tests.
 - The "one generation at a time" guard moved into the view model, shared by send,
   regenerate and resend instead of being re-checked per entry point.
+- The adaptive policy is a pure function over a plain device snapshot (`Adaptive.plan`),
+  so it is unit-tested on the JVM — including an exhaustive sweep over the input space
+  asserting its invariants. `ModelManager` now holds a plan *provider* rather than the
+  five fixed integers it used to be constructed with, which is what makes re-planning
+  possible at all. `effectiveContextTokens()` reports the window the loaded context
+  actually has, so history budgeting can't drift from it between loads.
 - **ggml's dot-product kernels: two attempts, both reverted.** They are compile-time
   gated on `__ARM_FEATURE_DOTPROD`, which only `-march` defines, so a cross-compile
   naming no target omits them. `GGML_CPU_ALL_VARIANTS` (build one CPU backend per

@@ -108,6 +108,46 @@
     <string name="model_use">Use</string>
     <string name="model_none_installed">No models yet. Download one below or import a .gguf.</string>
 
+    <!-- System info -->
+    <string name="settings_section_system">System info</string>
+    <string name="system_summary">What Domain AI has detected about this device, and how it has chosen to run on it. Useful in a bug report.</string>
+    <string name="system_group_device">Device</string>
+    <string name="system_group_cpu">Processor</string>
+    <string name="system_group_engine">Inference engine</string>
+    <string name="system_group_memory">Memory</string>
+    <string name="system_group_plan">Current plan</string>
+    <string name="system_row_model">Model</string>
+    <string name="system_row_android">Android</string>
+    <string name="system_row_abi">ABI</string>
+    <string name="system_row_app">App version</string>
+    <string name="system_row_cores">Cores</string>
+    <string name="system_row_features">Features</string>
+    <string name="system_row_dotprod">Dot product</string>
+    <string name="system_row_build">Built with</string>
+    <string name="system_row_backends">Backends</string>
+    <string name="system_row_ram">RAM</string>
+    <string name="system_row_thermal">Thermal</string>
+    <string name="system_row_power_save">Battery saver</string>
+    <string name="system_row_threads">Threads</string>
+    <string name="system_row_context">Context</string>
+    <string name="system_row_batch">Prompt batch</string>
+    <string name="system_row_constraints">Adapted for</string>
+    <string name="system_value_unknown">Unknown</string>
+    <string name="system_value_yes">Yes</string>
+    <string name="system_value_no">No</string>
+    <string name="system_value_on">On</string>
+    <string name="system_value_off">Off</string>
+    <string name="system_value_pending">Not started yet</string>
+    <string name="system_value_none">Nothing — running at full device capability</string>
+    <string name="system_ram_value">%1$s free of %2$s</string>
+    <string name="system_auto_value">%1$d (Auto)</string>
+    <string name="system_chosen_value">%1$d (your choice)</string>
+    <string name="system_max_suffix">max %1$d</string>
+    <string name="system_tokens_suffix">tokens</string>
+    <string name="action_copy_system_info">Copy for a bug report</string>
+    <string name="action_refresh_system_info">Refresh</string>
+    <string name="system_info_copied">System info copied.</string>
+
     <!-- Diagnostics (debug builds only) -->
     <string name="settings_section_diagnostics">Diagnostics</string>
     <string name="diagnostics_summary">Share this app\'s logs as a text file. Debug builds only.</string>
