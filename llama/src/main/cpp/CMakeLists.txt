@@ -34,27 +34,32 @@ set(GGML_LLAMAFILE       ON  CACHE BOOL "" FORCE)
 set(GGML_NATIVE          OFF CACHE BOOL "" FORCE)
 
 # --- Target CPU ISA ---------------------------------------------------------
-# Without this the cross-compile lands on the NDK's baseline armv8-a, so none of
-# ggml's accelerated integer kernels are compiled in at all: they are guarded on
-# __ARM_FEATURE_DOTPROD, which the compiler only defines from -march. That makes
-# dotprod the single largest CPU win available, since quantized matmul is most of
-# both prefill and generation (it also switches on the dotprod paths inside the
-# llamafile sgemm kernels enabled above).
+# Deliberately left at the NDK's baseline armv8-a. ggml's accelerated integer
+# kernels are guarded on __ARM_FEATURE_DOTPROD / __ARM_FEATURE_MATMUL_INT8, which
+# the compiler only defines from -march, so this build does NOT get them — that
+# is a known cost, accepted for a reason.
 #
-# Requires an ARMv8.2 CPU. Every arm64 SoC from ~2017 on has dotprod
-# (Cortex-A55/A75 and later: Snapdragon 845+, Exynos 9xxx, Dimensity, Tensor),
-# but ARMv8.0 arm64 parts do not — Snapdragon 835 and Exynos 8895 most notably.
-# Those instructions can be emitted anywhere in the library, so such a device
-# would SIGILL at an arbitrary point rather than fail cleanly; DeviceCapabilities
-# checks the dotprod hwcap before the native library is loaded and keeps the app
-# on its offline responder instead.
+# v1.11 briefly set this to "armv8.2-a+dotprod+fp16". The kernels were verified
+# present (1048 sdot/udot in libggml-cpu.so) but the maintainer's own phone — a
+# Xiaomi on Android 16 with 8 GB of RAM — could not run on-device models at all
+# afterwards, and both detection paths (/proc/cpuinfo's Features line, then
+# AT_HWCAP) agreed the CPU has no asimddp.
 #
-# i8mm/SVE2/SME are deliberately NOT requested here: they would raise the
-# baseline to armv8.6-a and drop everything before ~2021 flagships. Recovering
-# those without dropping any device needs GGML_CPU_ALL_VARIANTS runtime dispatch,
-# which is a separate change (it forces BUILD_SHARED_LIBS and multi-.so
-# packaging).
-set(GGML_CPU_ARM_ARCH    "armv8.2-a+dotprod+fp16" CACHE STRING "" FORCE)
+# The lesson worth keeping: **RAM size says nothing about CPU generation, and
+# dot product is OPTIONAL in ARMv8.2 (mandatory only from ARMv8.4).** Budget
+# phones routinely pair 8 GB of RAM with Cortex-A73/A53 (ARMv8.0, no dotprod) or
+# an A55 whose FEAT_DotProd was not implemented. For an on-device LLM app whose
+# natural audience is exactly "cheap phone with lots of RAM", a fixed armv8.2
+# baseline excludes a large part of the market — including this project's primary
+# test device. A build that is faster on hardware nobody here owns is worth less
+# than a build that runs.
+#
+# Getting those kernels back without dropping any device needs runtime dispatch
+# per CPU tier, not a raised compile-time baseline. GGML_CPU_ALL_VARIANTS is the
+# supported route and was also tried and reverted (it requires GGML_BACKEND_DL,
+# whose registry scans a filesystem directory that Android never populates —
+# see docs/ARCHITECTURE.md for the full autopsy and the bare-soname path that
+# would sidestep it).
 
 # --- GPU acceleration (Vulkan + OpenCL) -------------------------------------
 # Off by default so the plain CPU cross-compile always works (e.g. contributors

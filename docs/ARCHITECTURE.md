@@ -118,21 +118,35 @@ llama/
 ggml's fast integer kernels are compile-time gated on ARM feature macros
 (`__ARM_FEATURE_DOTPROD`, `__ARM_FEATURE_MATMUL_INT8`, …) that the compiler only
 defines from `-march`. A cross-compile that names no target therefore silently
-produces a binary with *none* of them — which is what the build did until v1.11.
+produces a binary with *none* of them.
 
-The build now sets `GGML_CPU_ARM_ARCH` to `armv8.2-a+dotprod+fp16` for the whole
-library. ggml still builds as several `.so` files, but they are ordinary **shared**
-libraries wired together by `DT_NEEDED` — `libggml.so` names `libggml-cpu.so`,
-`libggml-vulkan.so`, `libggml-opencl.so` and `libggml-base.so` — so the dynamic
-linker loads the entire chain on `System.loadLibrary`, with no discovery step. That
-distinction, SHARED-with-`NEEDED` versus `MODULE`-discovered-at-runtime, is the whole
-reason this works and the alternative below does not.
+**The build targets the NDK's baseline `armv8-a`, so it does not have them.** That
+is a known cost, taken deliberately. Two ways to get them were implemented and both
+were reverted — the reasons are the useful part of this section.
 
-Verified from the shipped APK: `libggml-cpu.so` carries 1048 `sdot`/`udot`
-instructions, and `libggml.so` has a `NEEDED` entry for it.
+ggml builds as several `.so` files, but they are ordinary **shared** libraries wired
+together by `DT_NEEDED` — `libggml.so` names `libggml-cpu.so`, `libggml-vulkan.so`,
+`libggml-opencl.so` and `libggml-base.so` — so the dynamic linker loads the entire
+chain on `System.loadLibrary`, with no discovery step. That distinction,
+SHARED-with-`NEEDED` versus `MODULE`-discovered-at-runtime, is the whole reason this
+packaging works and the first alternative below does not.
 
-The fixed baseline is a deliberate second choice; the first was rejected on device,
-and the reason is worth keeping:
+> **Why not a raised baseline?** v1.11 set `GGML_CPU_ARM_ARCH` to
+> `armv8.2-a+dotprod+fp16`. It built, and the kernels were verified present in the
+> shipped APK (1048 `sdot`/`udot` instructions in `libggml-cpu.so`). It also stopped
+> on-device models working on this project's primary test device — a Xiaomi with 8 GB
+> of RAM — and both detection paths (`/proc/cpuinfo`'s `Features` line, then
+> `AT_HWCAP`) agreed that CPU has no `asimddp`.
+>
+> **Dot product is optional in ARMv8.2; it is mandatory only from ARMv8.4.** RAM size
+> says nothing about CPU generation: budget phones routinely pair 8 GB with
+> Cortex-A73/A53 (ARMv8.0) or an A55 whose FEAT_DotProd was not implemented. For an
+> on-device LLM app whose natural audience is "cheap phone with lots of RAM", a fixed
+> `armv8.2` baseline excludes a large slice of the market. A build that is faster on
+> hardware nobody here owns is worth less than a build that runs.
+
+The other rejected route is the one that would actually have been correct, had it
+worked:
 
 > **Why not `GGML_CPU_ALL_VARIANTS`?** ggml can compile the CPU backend once per
 > feature tier (it ships an Android list, `android_armv8.0_1` … `android_armv9.2_2`)
@@ -161,12 +175,16 @@ and the reason is worth keeping:
 > each candidate's exported `ggml_backend_score`. That keeps modern packaging and
 > needs no extraction, at the cost of owning the tier list.
 
-Because the ISA baseline is fixed, an ARMv8.0 arm64 CPU (Snapdragon 835, Exynos
-8895) would execute an unsupported instruction at whatever point the compiler
-emitted one. `CpuFeatures` reads the `asimddp` hwcap from `/proc/cpuinfo` and
-`ModelManager` refuses the load with an explanation rather than letting the process
-die mid-reply; the parse is pure and unit-tested, and gives the device the benefit
-of the doubt when the `Features` line is absent.
+Getting those kernels back without dropping a device needs runtime dispatch per CPU
+tier, not a raised compile-time baseline — the bare-soname path above is the open
+route.
+
+`CpuFeatures` survives from the raised-baseline attempt, now **diagnostic only**: it
+reads `AT_HWCAP` from `/proc/self/auxv` and logs the decoded feature list at startup.
+Nothing gates on it, because at baseline `armv8-a` there is nothing to gate. It stays
+because it is the input per-tier dispatch would need, and because it answers "does
+this phone have dotprod?" from a bug report rather than a guess. The parse is pure
+and unit-tested, and assumes capable when the vector is unreadable.
 
 ### Streaming
 

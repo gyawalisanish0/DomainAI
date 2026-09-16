@@ -169,7 +169,6 @@
     <!-- Error / status messages surfaced from non-UI layers -->
     <string name="model_import_failed">Import failed.</string>
     <string name="model_load_failed">Could not load model.</string>
-    <string name="model_cpu_unsupported">This device\'s CPU is too old for on-device models — it lacks the ARMv8.2 dot-product instructions Domain AI\'s inference engine needs. Chat still works with the offline responder, and cloud models are unaffected.</string>
     <string name="model_all_mirrors_failed">All %1$d mirrors failed. %2$s</string>
     <string name="model_gguf_invalid_download">Downloaded file is not a valid GGUF model.</string>
     <string name="model_finalize_download_failed">Could not finalize downloaded model.</string>

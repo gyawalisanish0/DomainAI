@@ -6,13 +6,6 @@ All notable changes to Domain AI are documented here. This project adheres to
 ## [1.11] — 2026-09-14
 
 ### Performance
-- **Faster on-device inference.** The native engine was being cross-compiled for
-  baseline `armv8-a`, which left ggml's accelerated integer kernels out of the build
-  entirely — they are guarded on the compiler's dot-product feature macro, and nothing
-  was asking for it. The build now targets `armv8.2-a+dotprod+fp16`, compiling them in
-  for quantized matmul: most of the work in both prompt prefill and token generation.
-  The llamafile/tinyBLAS `sgemm` kernels are enabled alongside it and gate on the same
-  feature, so the two compound. Costs under 1 MB of APK.
 - **q8_0 KV cache.** Long-context decoding on a phone is bound by memory traffic more
   than arithmetic, so the key/value cache is now kept quantized — roughly halving that
   traffic and freeing RAM a larger context can use instead. Models that can't support
@@ -22,14 +15,15 @@ All notable changes to Domain AI are documented here. This project adheres to
   device-adaptive logical batch, so a high-RAM phone reserved a compute buffer sized
   for 4096 tokens in exchange for prefill gains that had long since flattened. It is
   now capped independently.
+- **llamafile/tinyBLAS `sgemm` enabled** — upstream's own default, previously off only
+  to keep the cross-compile lean. It supplies the blocked matmul path that prompt
+  prefill leans on, for well under 1 MB of APK. Its quantized ARM kernels are gated on
+  dot product, so at this build's baseline the gain is limited to the f32/f16 paths.
 
 ### Changed
-- **On-device models now require an ARMv8.2 CPU** with dot-product support — every
-  arm64 chip from roughly 2017 on (Snapdragon 845+, Exynos 9xxx, Dimensity, Tensor).
-  A few early arm64 parts lack it, notably the Snapdragon 835 and Exynos 8895. Rather
-  than crash on an unsupported instruction part-way through a reply, the app checks the
-  CPU before loading the engine and explains the situation; the offline responder and
-  cloud models are unaffected.
+- **No CPU requirement beyond baseline arm64.** On-device inference still runs on every
+  arm64 device the app supports, the Snapdragon 835 and Exynos 8895 included. A raised
+  ISA baseline was tried during this cycle and reverted — see *Internal*.
 
 ### Added
 - **Regenerate a reply.** Every finished reply carries a regenerate control: the answer
@@ -50,6 +44,18 @@ All notable changes to Domain AI are documented here. This project adheres to
   model, covered by JVM unit tests.
 - The "one generation at a time" guard moved into the view model, shared by send,
   regenerate and resend instead of being re-checked per entry point.
+- **ggml's dot-product kernels: two attempts, both reverted.** They are compile-time
+  gated on `__ARM_FEATURE_DOTPROD`, which only `-march` defines, so a cross-compile
+  naming no target omits them. `GGML_CPU_ALL_VARIANTS` (build one CPU backend per
+  feature tier, pick at runtime) is the correct fix and failed on device: it requires
+  `GGML_BACKEND_DL`, whose registry discovers backends by scanning a filesystem
+  directory that modern Android packaging never populates. Raising the fixed baseline
+  to `armv8.2-a+dotprod+fp16` worked instead — and excluded this project's primary test
+  device, because **dot product is optional in ARMv8.2 and mandatory only from
+  ARMv8.4**, so 8 GB of RAM implies nothing about it. The build stays at `armv8-a`.
+  `CpuFeatures` remains as a startup diagnostic (`AT_HWCAP` from `/proc/self/auxv`,
+  decoded into the log) and gates nothing. `docs/ARCHITECTURE.md` carries the full
+  autopsy and the bare-soname route that would sidestep the directory scan.
 
 ## [1.08] — 2026-06-28
 

@@ -8,19 +8,25 @@ import java.nio.ByteOrder
 /**
  * Which CPU instruction-set features this device actually has.
  *
- * The native library is compiled for `armv8.2-a+dotprod`, so ggml's accelerated
- * integer kernels — and anything else the compiler chose to vectorise — may use
- * instructions an ARMv8.0 arm64 CPU does not implement. Those would raise SIGILL
- * at an arbitrary point rather than fail cleanly, so the app checks for them up
- * front and stays on its offline responder instead of dying mid-reply.
+ * **This is diagnostic, not a gate.** The native build targets baseline
+ * `armv8-a` (see `llama/src/main/cpp/CMakeLists.txt`), so every arm64 device can
+ * run on-device models and nothing here refuses a load. v1.11 briefly compiled
+ * for `armv8.2-a+dotprod+fp16` and had `ModelManager` check this first, to turn a
+ * SIGILL on an older CPU into a clean explanation; the raised baseline was
+ * reverted because it excluded the project's own primary test device, and the
+ * check went with it.
+ *
+ * What remains is the measurement, logged at startup. It is the input any future
+ * per-tier runtime dispatch needs, and it answers "does this phone have dotprod?"
+ * from a bug report instead of a guess.
  *
  * The answer comes from **`/proc/self/auxv`**, the auxiliary vector the kernel
  * hands every process, read for its `AT_HWCAP` entry — the same bitmask
  * `getauxval(AT_HWCAP)` returns, and the authoritative source for ARM feature
- * bits. An earlier version of this parsed the `Features` line of
- * `/proc/cpuinfo` instead and **wrongly rejected a capable device**: that line is
- * assembled by the vendor kernel and there is no guarantee it lists `asimddp`
- * even when the CPU implements it. The hwcap bitmask has a fixed meaning.
+ * bits. An earlier version parsed the `Features` line of `/proc/cpuinfo`
+ * instead: that line is assembled by the vendor kernel with no guarantee it
+ * lists `asimddp` even when the CPU implements it, whereas the hwcap bitmask has
+ * a fixed meaning.
  *
  * Parsing is kept pure and separate from the file read so it can be unit-tested
  * on the JVM without a device.
@@ -84,11 +90,10 @@ object CpuFeatures {
     /**
      * True when the auxv bitmask advertises dot-product support.
      *
-     * Defaults to **true** when the bitmask can't be determined at all, because a
-     * false negative disables on-device inference on a perfectly capable phone —
-     * which is a worse outcome than the SIGILL this guards against on the small
-     * and shrinking set of ARMv8.0 arm64 parts. That exact false negative is why
-     * this no longer reads `/proc/cpuinfo`.
+     * Defaults to **true** when the bitmask can't be determined at all. Nothing
+     * acts on the answer today, so the default costs nothing; it is kept this way
+     * so that if a caller ever does gate on it, an unreadable auxv cannot disable
+     * inference on a perfectly capable phone.
      */
     fun hasDotprod(auxv: ByteArray): Boolean {
         val hwcap = hwcapFrom(auxv) ?: return true
