@@ -52,6 +52,7 @@ class MainActivity : ComponentActivity() {
                                 factory = ChatViewModel.Factory(
                                     container.repository,
                                     container.modelManager,
+                                    container.modelProfileStore,
                                 ),
                             )
                             ChatScreen(
@@ -66,6 +67,7 @@ class MainActivity : ComponentActivity() {
                                     container.repository,
                                     container.modelManager,
                                     container.deviceCapabilities,
+                                    container.modelProfileStore,
                                 ),
                             )
                             SettingsScreen(

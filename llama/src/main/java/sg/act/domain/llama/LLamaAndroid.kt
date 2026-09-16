@@ -46,6 +46,29 @@ class LLamaAndroid private constructor() {
     /** Registered backend devices (e.g. "CPU [CPU]; Vulkan0 [GPU] Adreno 610"). */
     fun backendInfo(): String = cachedBackendInfo
 
+    // ggml's own view of the instruction-set features this binary was BUILT with
+    // ("NEON = 1 | DOTPROD = 0 | LLAMAFILE = 1 | …"). Empty until init, like above.
+    @Volatile
+    private var cachedSystemInfo: String = ""
+
+    /**
+     * ggml's build feature line. This is the authoritative answer to "which CPU
+     * kernels does the shipped engine actually contain?" — it reflects the compile
+     * flags, not the device, so a `DOTPROD = 0` here means the instructions were
+     * never emitted regardless of what the CPU supports.
+     */
+    fun systemInfo(): String = cachedSystemInfo
+
+    /**
+     * Force native initialization if it hasn't happened yet, so [backendInfo] and
+     * [systemInfo] are populated. Idempotent: the work happens on the run loop's
+     * first use, and this simply makes sure that use occurs. Safe to call with no
+     * model loaded — it touches the backend registry only.
+     */
+    suspend fun ensureInitialized() {
+        withContext(runLoop) { /* the thread factory runs backend_init on startup */ }
+    }
+
     // Timing of the most recent generation, for the speed benchmark.
     @Volatile
     private var lastPrefillMs: Long = 0
@@ -77,8 +100,9 @@ class LLamaAndroid private constructor() {
             log_to_android() // route llama.cpp's own logs to logcat (load errors etc.)
             backend_init(false, nativeLibDir, deviceSdkInt)
             cachedBackendInfo = backend_info()
+            cachedSystemInfo = system_info()
             Log.i(tag, "Backends: $cachedBackendInfo")
-            Log.d(tag, system_info())
+            Log.i(tag, "Build features: $cachedSystemInfo")
             r.run()
         }.apply { isDaemon = true }
     }.asCoroutineDispatcher()
@@ -95,7 +119,7 @@ class LLamaAndroid private constructor() {
         addAssistant: Boolean,
     ): String
     private external fun free_model(model: Long)
-    private external fun new_context(model: Long, nCtx: Int, nThreads: Int, affinityCores: IntArray): Long
+    private external fun new_context(model: Long, nCtx: Int, nThreads: Int, affinityCores: IntArray, nBatch: Int): Long
     private external fun context_size(context: Long): Int
     private external fun free_context(context: Long)
     private external fun backend_init(numa: Boolean, libDir: String?, sdkInt: Int)
@@ -131,6 +155,7 @@ class LLamaAndroid private constructor() {
         nGpuLayers: Int = 0,
         nThreads: Int = 0,
         affinityCores: IntArray = IntArray(0),
+        nBatch: Int = 512,
     ) {
         withContext(runLoop) {
             when (threadLocalState.get()) {
@@ -143,10 +168,10 @@ class LLamaAndroid private constructor() {
                         )
                     }
 
-                    val context = new_context(model, nCtx, nThreads, affinityCores)
+                    val context = new_context(model, nCtx, nThreads, affinityCores, nBatch)
                     if (context == 0L) throw IllegalStateException("new_context() failed")
 
-                    val batch = new_batch(512, 0, 1)
+                    val batch = new_batch(nBatch, 0, 1)
                     if (batch == 0L) throw IllegalStateException("new_batch() failed")
 
                     val sampler = new_sampler()

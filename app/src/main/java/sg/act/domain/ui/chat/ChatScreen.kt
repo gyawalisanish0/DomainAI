@@ -2,6 +2,7 @@ package sg.act.domain.ui.chat
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -62,6 +63,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.res.dimensionResource
 import androidx.compose.ui.res.integerResource
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.launch
@@ -70,13 +72,17 @@ import sg.act.domain.data.local.ModelSource
 import sg.act.domain.data.model.Conversation
 import sg.act.domain.data.model.Message
 import sg.act.domain.data.model.Role
+import sg.act.domain.data.model.messagesAfter
 import sg.act.domain.inference.InstalledModel
 import sg.act.domain.inference.ModelManager
+import sg.act.domain.inference.ModelProfile
+import sg.act.domain.inference.ProviderType
 import sg.act.domain.ui.components.ContextLengthRow
 import sg.act.domain.ui.components.KillSwitchChip
 import sg.act.domain.ui.components.MessageBubble
 import sg.act.domain.ui.components.SettingSwitchRow
 import sg.act.domain.ui.components.ThreadCountRow
+import sg.act.domain.ui.components.TypingIndicator
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -94,6 +100,12 @@ fun ChatScreen(
     val messages = state.conversation.messages
     val lastIndex = messages.lastIndex
     val lastLength = messages.lastOrNull()?.text?.length ?: 0
+    // The one reply a regenerate would replace: the final message, when it is a
+    // reply at all (a send that failed outright can leave a question last).
+    val replaceableReplyId = messages.lastOrNull()?.takeIf { it.role != Role.USER }?.id
+    // True while isGenerating but no reply bubble has appeared yet — the
+    // standalone typing placeholder is visible as a LazyColumn item at this point.
+    val showTypingPlaceholder = state.isGenerating && messages.lastOrNull()?.role == Role.USER
     var prevIndex by remember { mutableStateOf(-1) }
     LaunchedEffect(lastIndex, lastLength) {
         if (lastIndex < 0) return@LaunchedEffect
@@ -106,11 +118,19 @@ fun ChatScreen(
             listState.scrollToItem(lastIndex, Int.MAX_VALUE)
         }
     }
+    // Scroll to reveal the typing placeholder the moment it appears (between the
+    // user bubble and the oracle bubble being seeded).
+    LaunchedEffect(showTypingPlaceholder) {
+        if (showTypingPlaceholder && messages.isNotEmpty()) {
+            listState.animateScrollToItem(messages.size)
+        }
+    }
 
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     var renaming by remember { mutableStateOf<Conversation?>(null) }
     var deleting by remember { mutableStateOf<Conversation?>(null) }
+    var editing by remember { mutableStateOf<Message?>(null) }
     var showModelPicker by remember { mutableStateOf(false) }
     var showInferencePanel by remember { mutableStateOf(false) }
 
@@ -118,7 +138,7 @@ fun ChatScreen(
         ModelPickerSheet(
             state = state,
             onSelectLocal = { viewModel.selectLocalModel(it); showModelPicker = false },
-            onSelectCloud = { viewModel.selectCloudModel(); showModelPicker = false },
+            onSwitchToProfile = { viewModel.switchToProfile(it); showModelPicker = false },
             onDismiss = { showModelPicker = false },
         )
     }
@@ -127,7 +147,7 @@ fun ChatScreen(
         InferencePanelSheet(
             state = state,
             onSelectLocal = { viewModel.selectLocalModel(it) },
-            onSelectCloud = { viewModel.selectCloudModel() },
+            onSwitchToProfile = { viewModel.switchToProfile(it) },
             onSetGpu = viewModel::setGpuEnabled,
             onSetContext = viewModel::setContextTokens,
             onSetThreads = viewModel::setThreadCount,
@@ -147,6 +167,14 @@ fun ChatScreen(
             title = convo.title,
             onConfirm = { viewModel.deleteConversation(convo.id); deleting = null },
             onCancel = { deleting = null },
+        )
+    }
+    editing?.let { message ->
+        EditMessageDialog(
+            initial = message.text,
+            discarded = state.conversation.messagesAfter(message.id),
+            onConfirm = { text -> viewModel.editAndResend(message.id, text); editing = null },
+            onCancel = { editing = null },
         )
     }
 
@@ -221,7 +249,7 @@ fun ChatScreen(
                     // we don't re-parse Markdown (and re-run syntax highlighting) on
                     // every token. It re-renders as full Markdown once it completes.
                     val streamingId = if (state.isGenerating) {
-                        messages.lastOrNull { it.role == Role.ORACLE }?.id
+                        messages.lastOrNull { it.role == Role.DOMAIN }?.id
                     } else {
                         null
                     }
@@ -235,7 +263,34 @@ fun ChatScreen(
                         contentPadding = PaddingValues(vertical = gap),
                     ) {
                         items(messages, key = Message::id) { message ->
-                            MessageBubble(message, streaming = message.id == streamingId)
+                            // Turn-level actions are offered only between
+                            // generations, so a reply can't be rewritten from under
+                            // a stream that is still filling it in.
+                            val actionable = !state.isGenerating
+                            MessageBubble(
+                                message = message,
+                                streaming = message.id == streamingId,
+                                // Only the newest reply is replaceable: regenerating
+                                // an older one would silently discard everything
+                                // said after it.
+                                onRegenerate = if (actionable && message.id == replaceableReplyId) {
+                                    { viewModel.regenerate() }
+                                } else {
+                                    null
+                                },
+                                onEdit = if (actionable && message.role == Role.USER) {
+                                    { editing = message }
+                                } else {
+                                    null
+                                },
+                            )
+                        }
+                        // Shown during the gap between the user bubble appearing and
+                        // the oracle bubble being seeded (history prep + routing).
+                        if (showTypingPlaceholder) {
+                            item(key = "typing_placeholder") {
+                                PendingTypingBubble()
+                            }
                         }
                     }
                 }
@@ -367,6 +422,50 @@ private fun DeleteDialog(
     )
 }
 
+/**
+ * Reword a question and ask it again. Because the conversation continues from
+ * that turn, everything said after it goes — so the dialog says how much, rather
+ * than dropping it silently on confirm.
+ */
+@Composable
+private fun EditMessageDialog(
+    initial: String,
+    discarded: Int,
+    onConfirm: (String) -> Unit,
+    onCancel: () -> Unit,
+) {
+    var text by remember { mutableStateOf(initial) }
+    AlertDialog(
+        onDismissRequest = onCancel,
+        title = { Text(stringResource(R.string.edit_message_title)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(dimensionResource(R.dimen.space_s))) {
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    maxLines = integerResource(R.integer.input_max_lines),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                if (discarded > 0) {
+                    Text(
+                        pluralStringResource(R.plurals.edit_message_discards, discarded, discarded),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(text) }, enabled = text.isNotBlank()) {
+                Text(stringResource(R.string.edit_message_send))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onCancel) { Text(stringResource(R.string.model_download_confirm_cancel)) }
+        },
+    )
+}
+
 @Composable
 private fun EmptyState() {
     Column(
@@ -453,9 +552,8 @@ private fun LazyListState.isNearBottom(lastIndex: Int): Boolean {
 /** The subtitle under "Domain AI": the name of the currently selected model. */
 @Composable
 private fun selectedModelLabel(state: ChatUiState): String {
-    if (state.preferCloud && state.cloudModelId != null) {
-        return stringResource(R.string.model_label_cloud, shortCloudName(state.cloudModelId))
-    }
+    val activeProfile = state.savedProfiles.firstOrNull { it.id == state.activeProfileId }
+    if (activeProfile != null) return activeProfile.name
     return when (val s = state.modelState) {
         is ModelManager.State.Ready -> s.modelName
         is ModelManager.State.Loading -> s.modelName
@@ -463,16 +561,12 @@ private fun selectedModelLabel(state: ChatUiState): String {
     }
 }
 
-/** Trim a provider model id (e.g. "deepseek/deepseek-r1:free") to a short label. */
-private fun shortCloudName(modelId: String): String =
-    modelId.substringAfterLast('/').removeSuffix(":free")
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ModelPickerSheet(
     state: ChatUiState,
     onSelectLocal: (String) -> Unit,
-    onSelectCloud: () -> Unit,
+    onSwitchToProfile: (ModelProfile) -> Unit,
     onDismiss: () -> Unit,
 ) {
     ModalBottomSheet(
@@ -496,22 +590,24 @@ private fun ModelPickerSheet(
             ModelChoices(
                 state = state,
                 onSelectLocal = onSelectLocal,
-                onSelectCloud = onSelectCloud,
+                onSwitchToProfile = onSwitchToProfile,
             )
         }
     }
 }
 
 /**
- * The on-device + cloud model selection list, shared by the top-bar model picker
+ * The on-device + cloud profile selection list, shared by the top-bar model picker
  * and the chat inference panel so model switching has a single implementation.
  */
 @Composable
 private fun ModelChoices(
     state: ChatUiState,
     onSelectLocal: (String) -> Unit,
-    onSelectCloud: () -> Unit,
+    onSwitchToProfile: (ModelProfile) -> Unit,
 ) {
+    val isLocal = state.activeProfileId == null
+
     // On-device models.
     Text(
         stringResource(R.string.model_picker_local),
@@ -530,40 +626,62 @@ private fun ModelChoices(
             ModelPickerRow(
                 title = model.displayName,
                 subtitle = stringResource(
-                    if (model.source == ModelSource.IMPORT) {
-                        R.string.model_source_import
-                    } else {
-                        R.string.model_source_download
-                    },
+                    if (model.source == ModelSource.IMPORT) R.string.model_source_import
+                    else R.string.model_source_download,
                 ),
                 icon = Icons.Filled.Smartphone,
-                selected = !state.preferCloud && model.isActive,
+                selected = isLocal && model.isActive,
                 onClick = { onSelectLocal(model.fileName) },
             )
         }
     }
 
-    HorizontalDivider(modifier = Modifier.padding(vertical = dimensionResource(R.dimen.space_s)))
-
-    // Cloud model.
-    Text(
-        stringResource(R.string.model_picker_cloud),
-        style = MaterialTheme.typography.labelLarge,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
-    if (state.cloudModelId == null) {
+    // My server profiles (Space).
+    val serverProfiles = state.savedProfiles.filter { it.type == ProviderType.SPACE }
+    if (serverProfiles.isNotEmpty()) {
+        HorizontalDivider(modifier = Modifier.padding(vertical = dimensionResource(R.dimen.space_s)))
         Text(
-            stringResource(R.string.model_picker_no_cloud),
-            style = MaterialTheme.typography.bodySmall,
+            stringResource(R.string.model_picker_my_server),
+            style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-    } else {
-        ModelPickerRow(
-            title = shortCloudName(state.cloudModelId),
-            subtitle = state.cloudModelId,
-            icon = Icons.Filled.Cloud,
-            selected = state.preferCloud,
-            onClick = onSelectCloud,
+        for (profile in serverProfiles) {
+            ModelPickerRow(
+                title = profile.name,
+                subtitle = profile.model,
+                icon = Icons.Filled.Cloud,
+                selected = profile.id == state.activeProfileId,
+                onClick = { onSwitchToProfile(profile) },
+            )
+        }
+    }
+
+    // Cloud API profiles (OpenRouter + Custom).
+    val apiProfiles = state.savedProfiles.filter { it.type != ProviderType.SPACE }
+    if (apiProfiles.isNotEmpty()) {
+        HorizontalDivider(modifier = Modifier.padding(vertical = dimensionResource(R.dimen.space_s)))
+        Text(
+            stringResource(R.string.model_picker_cloud_api),
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        for (profile in apiProfiles) {
+            ModelPickerRow(
+                title = profile.name,
+                subtitle = profile.model,
+                icon = Icons.Filled.Cloud,
+                selected = profile.id == state.activeProfileId,
+                onClick = { onSwitchToProfile(profile) },
+            )
+        }
+    }
+
+    if (serverProfiles.isEmpty() && apiProfiles.isEmpty()) {
+        HorizontalDivider(modifier = Modifier.padding(vertical = dimensionResource(R.dimen.space_s)))
+        Text(
+            stringResource(R.string.model_picker_no_profiles),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }
@@ -577,7 +695,7 @@ private fun ModelChoices(
 private fun InferencePanelSheet(
     state: ChatUiState,
     onSelectLocal: (String) -> Unit,
-    onSelectCloud: () -> Unit,
+    onSwitchToProfile: (ModelProfile) -> Unit,
     onSetGpu: (Boolean) -> Unit,
     onSetContext: (Int) -> Unit,
     onSetThreads: (Int) -> Unit,
@@ -610,7 +728,7 @@ private fun InferencePanelSheet(
             ModelChoices(
                 state = state,
                 onSelectLocal = onSelectLocal,
-                onSelectCloud = onSelectCloud,
+                onSwitchToProfile = onSwitchToProfile,
             )
 
             HorizontalDivider(modifier = Modifier.padding(vertical = dimensionResource(R.dimen.space_s)))
@@ -678,6 +796,35 @@ private fun ModelPickerRow(
                 contentDescription = stringResource(R.string.model_in_use),
                 tint = colorResource(R.color.brand_local),
                 modifier = Modifier.size(dimensionResource(R.dimen.icon_small)),
+            )
+        }
+    }
+}
+
+/** Animated dots bubble shown while the oracle reply is being prepared. */
+@Composable
+private fun PendingTypingBubble() {
+    val corner = dimensionResource(R.dimen.bubble_corner)
+    val tail = dimensionResource(R.dimen.bubble_corner_tail)
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.Start,
+    ) {
+        Surface(
+            color = MaterialTheme.colorScheme.surfaceVariant,
+            shape = RoundedCornerShape(
+                topStart = corner,
+                topEnd = corner,
+                bottomStart = tail,
+                bottomEnd = corner,
+            ),
+        ) {
+            TypingIndicator(
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                modifier = Modifier.padding(
+                    horizontal = dimensionResource(R.dimen.bubble_pad_h),
+                    vertical = dimensionResource(R.dimen.bubble_pad_v),
+                ),
             )
         }
     }

@@ -3,6 +3,7 @@ package sg.act.domain.ui.settings
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
@@ -18,6 +19,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material3.AlertDialog
@@ -25,8 +27,6 @@ import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -49,11 +49,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.res.dimensionResource
 import androidx.compose.ui.res.integerResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.core.content.ContextCompat
@@ -61,10 +64,13 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import sg.act.domain.BuildConfig
 import sg.act.domain.R
 import sg.act.domain.core.Diagnostics
-import sg.act.domain.inference.ModelDownloader
+import sg.act.domain.core.SystemInfo
 import sg.act.domain.inference.ModelManager
+import sg.act.domain.inference.ModelProfile
 import sg.act.domain.inference.ModelSpec
 import sg.act.domain.inference.OpenRouterClient
+import sg.act.domain.inference.ProviderType
+import sg.act.domain.inference.SpaceClient
 import sg.act.domain.privacy.DeviceCapabilities
 import sg.act.domain.ui.components.ContextLengthRow
 import sg.act.domain.ui.components.ThreadCountRow
@@ -180,20 +186,69 @@ fun SettingsScreen(
             )
 
             HorizontalDivider()
-            SectionTitle(stringResource(R.string.settings_section_cloud))
-            CloudSection(
+            SectionTitle(stringResource(R.string.settings_section_my_server))
+            SpaceSection(
+                state = state,
+                onConnect = viewModel::connectSpace,
+                onLoadModel = viewModel::loadSpaceModel,
+                onRefresh = viewModel::refreshSpaceCatalog,
+                onDisconnect = viewModel::disconnectSpace,
+            )
+
+            HorizontalDivider()
+            SectionTitle(stringResource(R.string.settings_section_cloud_api))
+            OpenRouterSection(
                 state = state,
                 onFetch = viewModel::fetchOpenRouterModels,
                 onSelect = viewModel::selectOpenRouterModel,
-                onSaveManual = viewModel::saveProvider,
-                onDelete = viewModel::clearProvider,
+                onRemoveKey = viewModel::removeOpenRouterKey,
             )
+            AdvancedProviderSection(onSave = viewModel::saveProvider)
+
+            HorizontalDivider()
+            SectionTitle(stringResource(R.string.settings_section_profiles))
+            SavedProfilesSection(
+                state = state,
+                onSwitch = viewModel::switchProfile,
+                onDeactivate = viewModel::deactivateProfile,
+                onDelete = viewModel::deleteProfile,
+                onRename = viewModel::renameProfile,
+            )
+            if (state.providerValidating) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(dimensionResource(R.dimen.space_s)),
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(dimensionResource(R.dimen.icon_progress)),
+                        strokeWidth = dimensionResource(R.dimen.stroke_thin),
+                    )
+                    Text(
+                        stringResource(R.string.provider_validating),
+                        style = MaterialTheme.typography.labelMedium,
+                    )
+                }
+            }
+            state.providerError?.let {
+                Text(
+                    stringResource(R.string.provider_invalid, it),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colorResource(R.color.brand_blocked),
+                )
+            }
 
             HorizontalDivider()
             Text(
                 stringResource(R.string.settings_footer),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+
+            HorizontalDivider()
+            SectionTitle(stringResource(R.string.settings_section_system))
+            SystemInfoSection(
+                info = state.systemInfo,
+                onRefresh = viewModel::refreshSystemInfo,
             )
 
             // Debug builds only: export the app's own logcat to the share sheet.
@@ -217,6 +272,224 @@ fun SettingsScreen(
 private fun SectionTitle(text: String) {
     Text(text, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
 }
+
+/**
+ * Settings → System info: what the app detected and how it decided to run.
+ *
+ * Collapsed by default — it is a diagnostic panel, not a daily control — and
+ * re-sampled on expand, because thermal status and free memory are exactly the
+ * values that are stale by the time anyone looks.
+ */
+@Composable
+private fun SystemInfoSection(
+    info: SystemInfo?,
+    onRefresh: () -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
+
+    Text(
+        stringResource(R.string.system_summary),
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable {
+                expanded = !expanded
+                if (expanded) onRefresh()
+            }
+            .padding(vertical = dimensionResource(R.dimen.space_xs)),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Text(
+            info?.device ?: stringResource(R.string.system_value_unknown),
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        Icon(
+            if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+            contentDescription = null,
+        )
+    }
+
+    if (!expanded || info == null) return
+
+    Column(verticalArrangement = Arrangement.spacedBy(dimensionResource(R.dimen.space_xs))) {
+        InfoGroup(stringResource(R.string.system_group_device))
+        InfoRow(stringResource(R.string.system_row_model), info.device)
+        InfoRow(stringResource(R.string.system_row_android), info.android)
+        InfoRow(stringResource(R.string.system_row_abi), info.abi)
+        InfoRow(stringResource(R.string.system_row_app), info.appVersion)
+
+        InfoGroup(stringResource(R.string.system_group_cpu))
+        InfoRow(stringResource(R.string.system_row_cores), info.cores.toString())
+        InfoRow(
+            stringResource(R.string.system_row_dotprod),
+            when (info.hasDotprod) {
+                true -> stringResource(R.string.system_value_yes)
+                false -> stringResource(R.string.system_value_no)
+                null -> stringResource(R.string.system_value_unknown)
+            },
+        )
+        // The full hwcap word, not just the bit the app cares about: a short,
+        // plausible list distinguishes an older CPU from a parsing bug.
+        InfoRow(
+            label = stringResource(R.string.system_row_features),
+            value = listOfNotNull(info.hwcapHex, info.cpuFeatures)
+                .joinToString("\n")
+                .ifEmpty { stringResource(R.string.system_value_unknown) },
+            wide = true,
+        )
+
+        InfoGroup(stringResource(R.string.system_group_engine))
+        // ggml's own build line. This is the honest answer to "does the shipped
+        // engine contain dot-product kernels?" — it reports compile flags, so a
+        // DOTPROD = 0 here holds no matter what the CPU above can do.
+        InfoRow(
+            label = stringResource(R.string.system_row_build),
+            value = info.engineBuildFeatures.ifEmpty { stringResource(R.string.system_value_pending) },
+            wide = true,
+        )
+        InfoRow(
+            label = stringResource(R.string.system_row_backends),
+            value = info.backends.ifEmpty { stringResource(R.string.system_value_pending) },
+            wide = true,
+        )
+
+        InfoGroup(stringResource(R.string.system_group_memory))
+        InfoRow(
+            stringResource(R.string.system_row_ram),
+            stringResource(
+                R.string.system_ram_value,
+                formatMegabytes(info.availableRamMb),
+                formatMegabytes(info.totalRamMb),
+            ),
+        )
+        InfoRow(stringResource(R.string.system_row_thermal), info.thermal)
+        InfoRow(
+            stringResource(R.string.system_row_power_save),
+            stringResource(
+                if (info.powerSaveMode) R.string.system_value_on else R.string.system_value_off,
+            ),
+        )
+
+        InfoGroup(stringResource(R.string.system_group_plan))
+        InfoRow(
+            stringResource(R.string.system_row_threads),
+            planValue(
+                effective = info.effectiveThreads,
+                userChosen = info.threadsUserChosen,
+                max = info.plan.maxThreads,
+            ),
+        )
+        InfoRow(
+            stringResource(R.string.system_row_context),
+            planValue(
+                effective = info.effectiveContextTokens,
+                userChosen = info.contextUserChosen,
+                max = info.plan.maxContextTokens,
+                suffix = stringResource(R.string.system_tokens_suffix),
+            ),
+        )
+        InfoRow(stringResource(R.string.system_row_batch), info.plan.batchSize.toString())
+        // The point of the panel: when the plan is smaller than the hardware would
+        // allow, say which live condition shrank it rather than looking broken.
+        InfoRow(
+            label = stringResource(R.string.system_row_constraints),
+            value = info.plan.constraints
+                .joinToString(", ") { it.label }
+                .ifEmpty { stringResource(R.string.system_value_none) },
+            wide = true,
+        )
+
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(dimensionResource(R.dimen.space_s)),
+            modifier = Modifier.padding(top = dimensionResource(R.dimen.space_xs)),
+        ) {
+            OutlinedButton(onClick = {
+                clipboard.setText(AnnotatedString(info.report()))
+                // Android 13+ shows its own copy confirmation; a toast would double it.
+                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+                    Toast.makeText(context, R.string.system_info_copied, Toast.LENGTH_SHORT).show()
+                }
+            }) {
+                Text(stringResource(R.string.action_copy_system_info))
+            }
+            TextButton(onClick = onRefresh) {
+                Text(stringResource(R.string.action_refresh_system_info))
+            }
+        }
+    }
+}
+
+@Composable
+private fun InfoGroup(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.labelLarge,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(top = dimensionResource(R.dimen.space_s)),
+    )
+}
+
+/**
+ * One label/value pair. [wide] stacks the value under the label instead of
+ * sharing the row, for the long multi-word values (feature lists, backend
+ * strings) that would otherwise wrap into a narrow column.
+ */
+@Composable
+private fun InfoRow(label: String, value: String, wide: Boolean = false) {
+    if (wide) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Text(
+                label,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(value, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
+        }
+    } else {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(dimensionResource(R.dimen.space_s)),
+        ) {
+            Text(
+                label,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f),
+            )
+            Text(value, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1.4f))
+        }
+    }
+}
+
+/** "4 (Auto) · max 6" — the effective value, where it came from, and the ceiling. */
+@Composable
+private fun planValue(
+    effective: Int,
+    userChosen: Boolean,
+    max: Int,
+    suffix: String? = null,
+): String {
+    val head = stringResource(
+        if (userChosen) R.string.system_chosen_value else R.string.system_auto_value,
+        effective,
+    )
+    val withSuffix = if (suffix != null) "$head $suffix" else head
+    return "$withSuffix · " + stringResource(R.string.system_max_suffix, max)
+}
+
+/** MB as MB below a gigabyte, GB with one decimal above it. */
+private fun formatMegabytes(mb: Long): String =
+    if (mb < 1024) {
+        "$mb MB"
+    } else {
+        String.format(Locale.US, "%.1f GB", mb / 1024.0)
+    }
 
 @Composable
 private fun SwitchRow(
@@ -242,78 +515,106 @@ private fun SwitchRow(
     }
 }
 
-/**
- * The single "Cloud" provider area. Exactly one provider can be active at a time.
- * When one is configured, only an uneditable summary + Delete is shown — the key
- * itself (stored encrypted) is never displayed. Otherwise the OpenRouter picker
- * and the advanced manual form are shown, and selecting/saving validates the
- * connection (a real round-trip) before persisting.
- */
 @Composable
-private fun CloudSection(
+private fun SavedProfilesSection(
     state: SettingsUiState,
-    onFetch: (String) -> Unit,
-    onSelect: (String, OpenRouterClient.FreeModel) -> Unit,
-    onSaveManual: (String, String, String) -> Unit,
-    onDelete: () -> Unit,
+    onSwitch: (ModelProfile) -> Unit,
+    onDeactivate: () -> Unit,
+    onDelete: (String) -> Unit,
+    onRename: (String, String) -> Unit,
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(dimensionResource(R.dimen.space_s))) {
-        if (state.providerValidating) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(dimensionResource(R.dimen.space_s)),
-            ) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(dimensionResource(R.dimen.icon_progress)),
-                    strokeWidth = dimensionResource(R.dimen.stroke_thin),
-                )
-                Text(
-                    stringResource(R.string.provider_validating),
-                    style = MaterialTheme.typography.labelMedium,
-                )
-            }
-        }
-        state.providerError?.let {
-            Text(
-                stringResource(R.string.provider_invalid, it),
-                style = MaterialTheme.typography.bodySmall,
-                color = colorResource(R.color.brand_blocked),
-            )
-        }
+    var renamingId by remember { mutableStateOf<String?>(null) }
+    var renameText by remember { mutableStateOf("") }
 
-        if (state.hasProvider) {
-            ActiveProviderCard(modelId = state.activeModelId, onDelete = onDelete)
-        } else {
-            OpenRouterSection(state = state, onFetch = onFetch, onSelect = onSelect)
-            AdvancedProviderSection(onSave = onSaveManual)
-        }
+    renamingId?.let { id ->
+        AlertDialog(
+            onDismissRequest = { renamingId = null },
+            title = { Text(stringResource(R.string.profile_rename_title)) },
+            text = {
+                OutlinedTextField(
+                    value = renameText,
+                    onValueChange = { renameText = it },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { onRename(id, renameText); renamingId = null }, enabled = renameText.isNotBlank()) {
+                    Text(stringResource(R.string.history_rename_save))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { renamingId = null }) { Text(stringResource(R.string.model_download_confirm_cancel)) }
+            },
+        )
     }
-}
 
-@Composable
-private fun ActiveProviderCard(modelId: String?, onDelete: () -> Unit) {
-    Card(
-        colors = CardDefaults.cardColors(
-            containerColor = colorResource(R.color.brand_cloud)
-                .copy(alpha = integerResource(R.integer.alpha_container_soft_pct) / 100f),
-        ),
-    ) {
-        Column(
-            modifier = Modifier.padding(dimensionResource(R.dimen.space_m)),
-            verticalArrangement = Arrangement.spacedBy(dimensionResource(R.dimen.space_s)),
-        ) {
+    Column(verticalArrangement = Arrangement.spacedBy(dimensionResource(R.dimen.space_s))) {
+        if (state.savedProfiles.isEmpty()) {
             Text(
-                stringResource(R.string.provider_active, modelId ?: "—"),
-                style = MaterialTheme.typography.bodyMedium,
-                color = colorResource(R.color.brand_cloud),
-            )
-            Text(
-                stringResource(R.string.provider_locked_hint),
+                stringResource(R.string.profile_empty),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            OutlinedButton(onClick = onDelete) {
-                Text(stringResource(R.string.provider_delete))
+        } else {
+            for (profile in state.savedProfiles) {
+                val isActive = profile.id == state.activeProfileId
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(dimensionResource(R.dimen.space_s)),
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(profile.name, style = MaterialTheme.typography.bodyMedium)
+                        val typeLabel = stringResource(
+                            when (profile.type) {
+                                ProviderType.SPACE -> R.string.profile_type_space
+                                ProviderType.OPEN_ROUTER -> R.string.profile_type_openrouter
+                                ProviderType.CUSTOM -> R.string.profile_type_custom
+                            },
+                        )
+                        Text(
+                            "$typeLabel · ${profile.model.substringAfterLast('/').take(30)}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                        )
+                    }
+                    if (isActive) {
+                        Text(
+                            stringResource(R.string.profile_active),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = colorResource(R.color.brand_cloud),
+                        )
+                        OutlinedButton(onClick = onDeactivate) {
+                            Text(stringResource(R.string.model_use).let { "×" })
+                        }
+                    } else {
+                        OutlinedButton(
+                            onClick = { onSwitch(profile) },
+                            enabled = !state.providerValidating,
+                        ) {
+                            Text(stringResource(R.string.profile_switch))
+                        }
+                    }
+                    IconButton(onClick = {
+                        renameText = profile.name; renamingId = profile.id
+                    }) {
+                        Icon(
+                            Icons.Filled.Edit,
+                            contentDescription = stringResource(R.string.profile_rename),
+                            modifier = Modifier.size(dimensionResource(R.dimen.icon_small)),
+                        )
+                    }
+                    IconButton(onClick = { onDelete(profile.id) }) {
+                        Icon(
+                            Icons.Filled.Delete,
+                            contentDescription = stringResource(R.string.profile_delete),
+                            tint = colorResource(R.color.brand_blocked),
+                            modifier = Modifier.size(dimensionResource(R.dimen.icon_small)),
+                        )
+                    }
+                }
             }
         }
     }
@@ -764,6 +1065,7 @@ private fun OpenRouterSection(
     state: SettingsUiState,
     onFetch: (String) -> Unit,
     onSelect: (String, OpenRouterClient.FreeModel) -> Unit,
+    onRemoveKey: () -> Unit,
 ) {
     var apiKey by remember { mutableStateOf("") }
 
@@ -773,10 +1075,29 @@ private fun OpenRouterSection(
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        if (state.orKeySaved) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(dimensionResource(R.dimen.space_s)),
+            ) {
+                Text(
+                    stringResource(R.string.openrouter_key_saved),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colorResource(R.color.brand_local),
+                    modifier = Modifier.weight(1f),
+                )
+                OutlinedButton(onClick = onRemoveKey) { Text(stringResource(R.string.openrouter_remove_key)) }
+            }
+        }
         OutlinedTextField(
             value = apiKey,
             onValueChange = { apiKey = it },
-            label = { Text(stringResource(R.string.openrouter_key_label)) },
+            label = {
+                Text(
+                    if (state.orKeySaved) stringResource(R.string.openrouter_change_key)
+                    else stringResource(R.string.openrouter_key_label),
+                )
+            },
             modifier = Modifier.fillMaxWidth(),
             singleLine = true,
             visualTransformation = PasswordVisualTransformation(),
@@ -788,7 +1109,7 @@ private fun OpenRouterSection(
         ) {
             Button(
                 onClick = { onFetch(apiKey) },
-                enabled = apiKey.isNotBlank() && !state.openRouterLoading,
+                enabled = (apiKey.isNotBlank() || state.orKeySaved) && !state.openRouterLoading,
             ) {
                 Text(stringResource(R.string.openrouter_fetch))
             }
@@ -813,10 +1134,11 @@ private fun OpenRouterSection(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+        val activeProfileModel = state.savedProfiles.firstOrNull { it.id == state.activeProfileId }?.model
         for (model in state.openRouterModels) {
             OpenRouterRow(
                 model = model,
-                active = model.id == state.activeModelId,
+                active = model.id == activeProfileModel,
                 enabled = !state.providerValidating,
                 onUse = { onSelect(apiKey, model) },
             )
@@ -863,4 +1185,223 @@ private fun OpenRouterRow(
             Text(stringResource(R.string.openrouter_use))
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Self-hosted Space section
+// ---------------------------------------------------------------------------
+
+@Composable
+private fun SpaceSection(
+    state: SettingsUiState,
+    onConnect: (String, String) -> Unit,
+    onLoadModel: (SpaceClient.CatalogModel) -> Unit,
+    onRefresh: () -> Unit,
+    onDisconnect: () -> Unit,
+) {
+    var spaceUrl by remember { mutableStateOf(state.spaceUrl) }
+    var spaceToken by remember { mutableStateOf("") }
+
+    Column(verticalArrangement = Arrangement.spacedBy(dimensionResource(R.dimen.space_s))) {
+        Text(
+            stringResource(R.string.space_hint),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        if (state.spaceCredentialsSaved) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(dimensionResource(R.dimen.space_s)),
+            ) {
+                Text(
+                    stringResource(R.string.space_connected_to, state.spaceUrlPreview),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colorResource(R.color.brand_local),
+                    modifier = Modifier.weight(1f),
+                )
+                if (!state.spaceConnected) {
+                    OutlinedButton(
+                        onClick = { onConnect(state.spaceUrl, state.spaceToken) },
+                        enabled = !state.spaceConnecting,
+                    ) { Text(stringResource(R.string.space_connect)) }
+                }
+                OutlinedButton(onClick = onDisconnect) { Text(stringResource(R.string.space_disconnect)) }
+            }
+            if (state.spaceConnecting) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(dimensionResource(R.dimen.space_s)),
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(dimensionResource(R.dimen.icon_progress)),
+                        strokeWidth = dimensionResource(R.dimen.stroke_thin),
+                    )
+                    Text(stringResource(R.string.space_connecting), style = MaterialTheme.typography.labelMedium)
+                }
+            }
+        } else {
+            OutlinedTextField(
+                value = spaceUrl,
+                onValueChange = { spaceUrl = it },
+                label = { Text(stringResource(R.string.space_url_label)) },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+            )
+            OutlinedTextField(
+                value = spaceToken,
+                onValueChange = { spaceToken = it },
+                label = { Text(stringResource(R.string.space_token_label)) },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                visualTransformation = PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(dimensionResource(R.dimen.space_s)),
+            ) {
+                Button(
+                    onClick = { onConnect(spaceUrl, spaceToken) },
+                    enabled = spaceUrl.isNotBlank() && spaceToken.isNotBlank() && !state.spaceConnecting,
+                ) {
+                    Text(stringResource(R.string.space_connect))
+                }
+                if (state.spaceConnecting) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(dimensionResource(R.dimen.icon_progress)),
+                        strokeWidth = dimensionResource(R.dimen.stroke_thin),
+                    )
+                    Text(
+                        stringResource(R.string.space_connecting),
+                        style = MaterialTheme.typography.labelMedium,
+                    )
+                }
+            }
+        }
+        state.spaceError?.let {
+            Text(it, style = MaterialTheme.typography.bodySmall, color = colorResource(R.color.brand_blocked))
+        }
+
+        if (state.spaceConnected) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(dimensionResource(R.dimen.space_s)),
+            ) {
+                OutlinedButton(onClick = onRefresh, enabled = !state.spaceCatalogLoading) {
+                    Text(stringResource(R.string.space_refresh))
+                }
+                if (state.spaceCatalogLoading) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(dimensionResource(R.dimen.icon_progress)),
+                        strokeWidth = dimensionResource(R.dimen.stroke_thin),
+                    )
+                    Text(
+                        stringResource(R.string.space_loading_catalog),
+                        style = MaterialTheme.typography.labelMedium,
+                    )
+                }
+            }
+
+            state.spaceLoadProgress?.let { progress ->
+                Column(verticalArrangement = Arrangement.spacedBy(dimensionResource(R.dimen.space_xs))) {
+                    if (progress is SpaceClient.LoadEvent.Downloading) {
+                        LinearProgressIndicator(
+                            progress = { progress.pct / 100f },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    } else {
+                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    }
+                    val progressText = when (progress) {
+                        is SpaceClient.LoadEvent.Downloading ->
+                            stringResource(R.string.space_downloading, progress.pct)
+                        SpaceClient.LoadEvent.Cached -> stringResource(R.string.space_cached)
+                        SpaceClient.LoadEvent.Loading -> stringResource(R.string.space_loading_model)
+                        else -> null
+                    }
+                    progressText?.let {
+                        Text(it, style = MaterialTheme.typography.labelMedium)
+                    }
+                }
+            }
+
+            if (state.spaceCatalog.isEmpty() && !state.spaceCatalogLoading) {
+                Text(
+                    stringResource(R.string.space_catalog_empty),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            for (model in state.spaceCatalog) {
+                SpaceCatalogRow(
+                    model = model,
+                    enabled = !state.providerValidating && state.spaceLoadProgress == null,
+                    onLoad = { onLoadModel(model) },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SpaceCatalogRow(
+    model: SpaceClient.CatalogModel,
+    enabled: Boolean,
+    onLoad: () -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(dimensionResource(R.dimen.space_s)),
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(model.name, style = MaterialTheme.typography.bodyMedium)
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(dimensionResource(R.dimen.space_xs)),
+            ) {
+                Text(
+                    model.family,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                SpaceSuitabilityChip(model.suitability)
+                if (model.cached) {
+                    Text(
+                        stringResource(R.string.space_model_cached),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = colorResource(R.color.brand_local),
+                    )
+                }
+            }
+        }
+        Text(
+            stringResource(R.string.space_size, model.sizeMb),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Button(onClick = onLoad, enabled = enabled) {
+            Text(stringResource(R.string.space_load))
+        }
+    }
+}
+
+@Composable
+private fun SpaceSuitabilityChip(suitability: SpaceClient.Suitability) {
+    val (labelRes, color) = when (suitability) {
+        SpaceClient.Suitability.RECOMMENDED ->
+            R.string.suitability_recommended to colorResource(R.color.brand_local)
+        SpaceClient.Suitability.HEAVY ->
+            R.string.suitability_heavy to colorResource(R.color.brand_cloud)
+        SpaceClient.Suitability.INSUFFICIENT ->
+            R.string.suitability_insufficient to colorResource(R.color.brand_blocked)
+    }
+    AssistChip(
+        onClick = {},
+        enabled = false,
+        label = { Text(stringResource(labelRes)) },
+        colors = AssistChipDefaults.assistChipColors(
+            disabledLabelColor = color,
+        ),
+    )
 }

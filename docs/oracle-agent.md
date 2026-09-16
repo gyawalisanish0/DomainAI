@@ -10,10 +10,13 @@
 
 ## 1. Why
 
-Domain AI is developed **entirely from a phone, with no PC** — builds happen on
-GitHub Actions, the debug APK is installed by hand, the app is exercised manually,
-and logs are gathered manually (currently via the in-app *Settings → Share app
-logs* export). Oracle's goal is to **close that loop and automate it**, so the
+Domain AI's build and release path runs **entirely on GitHub Actions**, but the
+verification path is still manual: the debug APK is installed by hand, the app is
+exercised by hand, and logs are gathered by hand (currently via the in-app
+*Settings → Share app logs* export). That manual stretch is the bottleneck
+regardless of what hardware the developer has, because the things worth verifying —
+real on-device inference, the GPU fallback, thermal behaviour — only happen on a
+physical ARM device. Oracle's goal is to **close that loop and automate it**, so the
 cycle becomes hands-off:
 
 ```

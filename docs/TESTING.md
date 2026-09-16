@@ -1,7 +1,7 @@
-# Testing across devices (no PC required)
+# Testing across devices
 
-Domain AI builds and ships entirely from GitHub Actions. This is how to test
-it across many devices without owning them — and without a PC.
+Domain AI builds and ships entirely from GitHub Actions. This is how to test it
+across many devices without owning them.
 
 ## The core constraint
 
@@ -32,7 +32,7 @@ and logcat per device**. This validates that the app launches, loads the
 native library, and survives the GPU graceful-fallback path across different
 chipsets, GPUs, and Android versions — none of which you have to own.
 
-### One-time setup (all doable from a phone browser)
+### One-time setup (all doable in the browser)
 
 1. Firebase / Google Cloud console → your project → enable the
    **Cloud Testing API** and **Cloud Tool Results API**.

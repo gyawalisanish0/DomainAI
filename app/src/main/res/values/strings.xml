@@ -18,6 +18,14 @@
     <string name="action_stop">Stop</string>
     <string name="action_copy">Copy</string>
     <string name="action_back">Back</string>
+    <string name="action_regenerate">Regenerate reply</string>
+    <string name="action_edit">Edit and resend</string>
+    <string name="edit_message_title">Edit message</string>
+    <string name="edit_message_send">Resend</string>
+    <plurals name="edit_message_discards">
+        <item quantity="one">Resending replaces the %1$d message after this one.</item>
+        <item quantity="other">Resending replaces the %1$d messages after this one.</item>
+    </plurals>
     <string name="empty_title">Ask Domain AI anything</string>
     <string name="empty_body">Every reply is generated on your device. Nothing leaves the phone unless you turn on cloud mode and approve what gets sent.</string>
     <string name="input_hint_local">Message Domain AI…</string>
@@ -99,6 +107,46 @@
     <string name="model_in_use">In use</string>
     <string name="model_use">Use</string>
     <string name="model_none_installed">No models yet. Download one below or import a .gguf.</string>
+
+    <!-- System info -->
+    <string name="settings_section_system">System info</string>
+    <string name="system_summary">What Domain AI has detected about this device, and how it has chosen to run on it. Useful in a bug report.</string>
+    <string name="system_group_device">Device</string>
+    <string name="system_group_cpu">Processor</string>
+    <string name="system_group_engine">Inference engine</string>
+    <string name="system_group_memory">Memory</string>
+    <string name="system_group_plan">Current plan</string>
+    <string name="system_row_model">Model</string>
+    <string name="system_row_android">Android</string>
+    <string name="system_row_abi">ABI</string>
+    <string name="system_row_app">App version</string>
+    <string name="system_row_cores">Cores</string>
+    <string name="system_row_features">Features</string>
+    <string name="system_row_dotprod">Dot product</string>
+    <string name="system_row_build">Built with</string>
+    <string name="system_row_backends">Backends</string>
+    <string name="system_row_ram">RAM</string>
+    <string name="system_row_thermal">Thermal</string>
+    <string name="system_row_power_save">Battery saver</string>
+    <string name="system_row_threads">Threads</string>
+    <string name="system_row_context">Context</string>
+    <string name="system_row_batch">Prompt batch</string>
+    <string name="system_row_constraints">Adapted for</string>
+    <string name="system_value_unknown">Unknown</string>
+    <string name="system_value_yes">Yes</string>
+    <string name="system_value_no">No</string>
+    <string name="system_value_on">On</string>
+    <string name="system_value_off">Off</string>
+    <string name="system_value_pending">Not started yet</string>
+    <string name="system_value_none">Nothing — running at full device capability</string>
+    <string name="system_ram_value">%1$s free of %2$s</string>
+    <string name="system_auto_value">%1$d (Auto)</string>
+    <string name="system_chosen_value">%1$d (your choice)</string>
+    <string name="system_max_suffix">max %1$d</string>
+    <string name="system_tokens_suffix">tokens</string>
+    <string name="action_copy_system_info">Copy for a bug report</string>
+    <string name="action_refresh_system_info">Refresh</string>
+    <string name="system_info_copied">System info copied.</string>
 
     <!-- Diagnostics (debug builds only) -->
     <string name="settings_section_diagnostics">Diagnostics</string>
@@ -207,4 +255,51 @@
     <string name="openrouter_logs_tag">logs data</string>
     <string name="openrouter_ctx">%1$dk ctx</string>
     <string name="openrouter_active">Active cloud model: %1$s</string>
+
+    <!-- Self-hosted Space backend -->
+    <string name="settings_section_space">Space backend</string>
+    <string name="space_hint">Connect to your self-hosted HF Docker Space running llama.cpp. Enter the Space URL and your SPACE_TOKEN to browse and load models remotely.</string>
+    <string name="space_url_label">Space URL</string>
+    <string name="space_token_label">Space token</string>
+    <string name="space_connect">Connect</string>
+    <string name="space_connecting">Connecting…</string>
+    <string name="space_refresh">Refresh catalog</string>
+    <string name="space_loading_catalog">Loading catalog…</string>
+    <string name="space_catalog_empty">No models in catalog — tap "Refresh catalog".</string>
+    <string name="space_load">Load</string>
+    <string name="space_downloading">Downloading %1$d%%</string>
+    <string name="space_loading_model">Loading into memory…</string>
+    <string name="space_cached">Cached — loading now…</string>
+    <string name="space_model_cached">Cached</string>
+    <string name="space_size">~%1$d MB</string>
+    <string name="space_unreachable">Could not reach the Space.</string>
+    <string name="space_loading_in_progress">Space is loading a model — use Load to track progress.</string>
+    <string name="space_prev_load_error">Previous load failed: %1$s</string>
+    <string name="space_connected_to">Connected: %1$s</string>
+    <string name="space_change">Change</string>
+    <string name="space_disconnect">Disconnect</string>
+
+    <!-- OpenRouter key persistence -->
+    <string name="openrouter_key_saved">OpenRouter key saved</string>
+    <string name="openrouter_change_key">Change key</string>
+    <string name="openrouter_remove_key">Remove key</string>
+    <string name="openrouter_add_profile">Add profile</string>
+
+    <!-- Saved inference profiles -->
+    <string name="settings_section_my_server">My server</string>
+    <string name="settings_section_cloud_api">Cloud API</string>
+    <string name="settings_section_profiles">Saved profiles</string>
+    <string name="model_picker_my_server">My server</string>
+    <string name="model_picker_cloud_api">Cloud API</string>
+    <string name="model_picker_no_profiles">No profiles yet — add one in Settings.</string>
+    <string name="profile_empty">No profiles saved yet. Connect a server or add an API key above.</string>
+    <string name="profile_switch">Use</string>
+    <string name="profile_active">Active</string>
+    <string name="profile_rename">Rename</string>
+    <string name="profile_rename_title">Rename profile</string>
+    <string name="profile_delete">Delete</string>
+    <string name="profile_type_space">My server</string>
+    <string name="profile_type_openrouter">OpenRouter</string>
+    <string name="profile_type_custom">Custom</string>
+    <string name="advanced_endpoint_add_profile">Add profile</string>
 </resources>

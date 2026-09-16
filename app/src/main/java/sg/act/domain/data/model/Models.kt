@@ -4,7 +4,7 @@ import kotlinx.serialization.Serializable
 import java.util.UUID
 
 /** Who authored a message. */
-enum class Role { USER, ORACLE }
+enum class Role { USER, DOMAIN }
 
 /**
  * Where an answer was produced. This is surfaced to the user on every Domain AI
@@ -35,11 +35,16 @@ data class Message(
 @Serializable
 data class Conversation(
     val id: String = UUID.randomUUID().toString(),
-    val title: String = "New chat",
+    val title: String = DEFAULT_TITLE,
     val messages: List<Message> = emptyList(),
     val updatedAt: Long = System.currentTimeMillis(),
     /** Rolling summary of the oldest turns, folded in when the chat outgrows the context. */
     val summary: String? = null,
     /** How many leading [messages] are already covered by [summary]. */
     val summarizedCount: Int = 0,
-)
+) {
+    companion object {
+        /** Placeholder title carried until the first prompt names the chat. */
+        const val DEFAULT_TITLE = "New chat"
+    }
+}
