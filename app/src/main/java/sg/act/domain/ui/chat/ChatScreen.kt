@@ -1,5 +1,6 @@
 package sg.act.domain.ui.chat
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -60,11 +61,13 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.res.dimensionResource
 import androidx.compose.ui.res.integerResource
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.launch
 import sg.act.domain.R
@@ -243,7 +246,7 @@ fun ChatScreen(
 
             Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                 if (messages.isEmpty()) {
-                    EmptyState()
+                    EmptyState(onSuggestion = viewModel::updateInput)
                 } else {
                     // The reply currently streaming in: render it as plain text so
                     // we don't re-parse Markdown (and re-run syntax highlighting) on
@@ -466,10 +469,30 @@ private fun EditMessageDialog(
     )
 }
 
+/**
+ * The first screen of a new chat.
+ *
+ * It used to be a title and a 24-word paragraph restating the privacy model —
+ * true, already said on the first-run screen, and no help at all to someone
+ * wondering what to type. Now it says one line and offers four starter prompts.
+ *
+ * Tapping one fills the input rather than sending it: the point is to get past
+ * the blank page, and people almost always want to adjust the wording before
+ * they commit. Each prompt is also a different shape of task, so the set doubles
+ * as a hint about what a small on-device model can do.
+ */
 @Composable
-private fun EmptyState() {
+private fun EmptyState(onSuggestion: (String) -> Unit) {
+    val suggestions = listOf(
+        stringResource(R.string.empty_suggestion_explain),
+        stringResource(R.string.empty_suggestion_write),
+        stringResource(R.string.empty_suggestion_summarize),
+        stringResource(R.string.empty_suggestion_code),
+    )
     Column(
-        modifier = Modifier.fillMaxSize().padding(dimensionResource(R.dimen.space_xl)),
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(dimensionResource(R.dimen.space_xl)),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
@@ -481,7 +504,37 @@ private fun EmptyState() {
             stringResource(R.string.empty_body),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(top = dimensionResource(R.dimen.space_s)),
+            modifier = Modifier.padding(top = dimensionResource(R.dimen.space_xs)),
+        )
+        Column(
+            modifier = Modifier.padding(top = dimensionResource(R.dimen.space_xl)),
+            verticalArrangement = Arrangement.spacedBy(dimensionResource(R.dimen.space_s)),
+        ) {
+            for (suggestion in suggestions) {
+                SuggestionChip(text = suggestion, onClick = { onSuggestion(suggestion) })
+            }
+        }
+    }
+}
+
+/** A starter prompt. Full-width and left-aligned, so the four read as a list. */
+@Composable
+private fun SuggestionChip(text: String, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(dimensionResource(R.dimen.group_corner)))
+            .background(MaterialTheme.colorScheme.surfaceContainerLow)
+            .clickable(role = Role.Button, onClick = onClick)
+            .padding(
+                horizontal = dimensionResource(R.dimen.space_l),
+                vertical = dimensionResource(R.dimen.space_m),
+            ),
+    ) {
+        Text(
+            text,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }

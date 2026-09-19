@@ -78,6 +78,13 @@ jobs:
       - name: Make gradlew executable
         run: chmod +x ./gradlew
 
+      # Cheap, needs no SDK, and guards the palette nobody develops in: the app
+      # is built and tested almost entirely in dark mode, so a light-mode
+      # contrast regression would otherwise ship unnoticed. Runs before the
+      # build so a palette mistake fails in seconds rather than after the NDK.
+      - name: Colour contrast (WCAG AA, both palettes)
+        run: python3 tools/check-contrast.py
+
       - name: Unit tests
         run: ./gradlew testDebugUnitTest --stacktrace
 

@@ -25,7 +25,16 @@
         <item quantity="other">Resending replaces the %1$d messages after this one.</item>
     </plurals>
     <string name="empty_title">Ask Domain AI anything</string>
-    <string name="empty_body">Every reply is generated on your device. Nothing leaves the phone unless you turn on cloud mode and approve what gets sent.</string>
+    <string name="empty_body">Nothing leaves your device unless you pick a cloud model.</string>
+    <!--
+      Starter prompts. An empty chat that only describes itself leaves the user
+      to think of something; these give them a first move, and each one shows off
+      a different thing a small on-device model is actually good at.
+    -->
+    <string name="empty_suggestion_explain">Explain how a solar panel works</string>
+    <string name="empty_suggestion_write">Write a short thank-you note</string>
+    <string name="empty_suggestion_summarize">Summarize the pros and cons of remote work</string>
+    <string name="empty_suggestion_code">Write a Python function to reverse a list</string>
     <string name="input_hint_local">Message Domain AI…</string>
 
     <!-- Routing badges -->
@@ -61,12 +70,22 @@
 
     <!-- First-launch acceptance (Terms of Service + Privacy Policy) -->
     <string name="accept_title">Welcome to Domain AI</string>
-    <string name="accept_intro">Domain AI is a local-first AI assistant. Answers are generated on your device by default and your conversations are stored encrypted on the phone. Please review and accept the terms below to continue.</string>
+    <string name="accept_intro">A local-first AI assistant. Here is what that means:</string>
+    <!--
+      The three promises that actually distinguish this app, as single lines. The
+      full Terms and Privacy Policy remain on this screen in their entirety,
+      one tap away, and accepting still requires a deliberate action.
+    -->
+    <string name="accept_point_local">Replies are generated on this device. No account, no server.</string>
+    <string name="accept_point_cloud">Nothing is sent anywhere unless you pick a cloud model — and it is redacted first.</string>
+    <string name="accept_point_storage">Chats are encrypted on your phone. No analytics, no trackers.</string>
+    <string name="accept_legal_prompt">By continuing you accept both documents below.</string>
+    <string name="accept_read">Read</string>
     <string name="accept_tos_heading">Terms of Service</string>
     <string name="accept_tos_body">By using Domain AI you agree to use it lawfully and at your own risk. Domain AI is provided “as is”, without warranties of any kind. AI output may be inaccurate or incomplete — do not rely on it for medical, legal, financial, or other professional decisions. You are responsible for the content you enter and for any model you download or import. To the maximum extent permitted by law, the developers are not liable for any damages arising from your use of the app. These terms may change with future updates; continued use after an update means you accept the updated terms.</string>
     <string name="accept_privacy_heading">Privacy Policy</string>
     <string name="accept_privacy_body">Local by default: your messages are processed on-device and never leave the phone unless you pick a cloud model. Domain AI contains no analytics and no trackers. Conversations and credentials are encrypted on-device with a hardware-backed key.\n\nCloud features (optional): if you choose a cloud model, your message — automatically redacted to strip detected emails, phone numbers, and similar identifiers — is sent to the provider you selected, solely to generate a reply. Some free cloud models may log or train on prompts; these require a separate, explicit permission. The exact redacted text sent is shown beneath each cloud reply.\n\nCrash reporting (optional, off by default): you may opt in to share crash and error reports (Firebase Crashlytics) to help fix bugs; only crash/error data is sent — never your conversations.\n\nYour controls: a network kill switch can block all network access, and every cloud and crash-reporting permission can be revoked anytime in Settings. Model files you download or import stay in app-private storage and are excluded from device backups.</string>
-    <string name="accept_consent_note">Accepting enables optional cloud features (cloud model use and free data-logging models). You stay fully on-device until you pick a cloud model, and you can disable these anytime in Settings.</string>
+    <string name="accept_consent_note">Accepting also turns on the optional cloud features. You stay fully on-device until you choose a cloud model, and both are revocable in Settings.</string>
     <string name="accept_action_accept">Accept &amp; continue</string>
     <string name="accept_action_decline">Decline &amp; exit</string>
 

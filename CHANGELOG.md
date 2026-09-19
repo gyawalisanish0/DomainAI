@@ -31,6 +31,17 @@ All notable changes to Domain AI are documented here. This project adheres to
   first launch runs AOT-compiled instead of being JIT'd. Debug builds are unaffected.
 
 ### Changed
+- **First-run screen leads with the promises, not the paperwork.** It opened with
+  roughly 440 words, all expanded: an intro, the full Terms, the full Privacy Policy
+  and a consent note. Now three single-line guarantees come first, with both legal
+  documents still present in full — collapsed, under an explicit "by continuing you
+  accept both documents below". Accepting is unchanged: a deliberate tap on a
+  labelled button.
+- **Light-mode contrast fix.** `brand_cloud` was `#B26A00`, which measured 3.97:1
+  against the light page background. It is used for small text — the Cloud routing
+  badge, the "Active" profile label, the "Heavy for this device" chip — where WCAG
+  AA requires 4.5:1, not the 3:1 that applies to icons. Darkened to `#8F5500`
+  (5.50:1 worst case). Dark mode was already compliant.
 - **No CPU requirement beyond baseline arm64.** On-device inference still runs on every
   arm64 device the app supports, the Snapdragon 835 and Exynos 8895 included. A raised
   ISA baseline was tried during this cycle and reverted — see *Internal*.
@@ -44,6 +55,11 @@ All notable changes to Domain AI are documented here. This project adheres to
   add contention without adding tokens. Memory pressure moves the ceilings (it clamps
   an explicit choice too, since a context free RAM can't back won't load); thermal and
   battery saver only bias Auto, so a thread count you picked yourself is kept.
+- **Starter prompts in an empty chat.** A new conversation used to be a heading and
+  a paragraph restating the privacy model — already said on the first-run screen, and
+  no help to someone wondering what to type. It now offers four tappable prompts, each
+  a different shape of task. Tapping one fills the input rather than sending it, since
+  people usually want to adjust the wording first.
 - **System info in Settings.** What the app detected about your device and how it
   decided to run: CPU cores and the decoded feature list (including whether the chip
   has dot product), the inference engine's own build flags and loaded backends, total
@@ -61,6 +77,11 @@ All notable changes to Domain AI are documented here. This project adheres to
 - Your own messages now have a copy control too, alongside edit.
 
 ### Internal
+- `tools/check-contrast.py` checks every foreground/background pairing in both
+  palettes against the WCAG floor that applies to how each one is actually used —
+  4.5:1 for the brand colours because they render as small text, not the 3:1 that
+  would have let the bug above pass. It runs in CI, before the build, because it
+  needs no Android SDK and guards the palette nobody develops in.
 - 32 unreferenced string resources removed (264 → 232): leftovers from a pre-send
   cloud review dialog, an older privacy banner and a previous model picker, all of
   whose code is long gone. None had a caller in Kotlin or XML.
