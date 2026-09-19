@@ -67,7 +67,7 @@ import androidx.compose.ui.res.dimensionResource
 import androidx.compose.ui.res.integerResource
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.Role as SemanticsRole
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.launch
 import sg.act.domain.R
@@ -525,7 +525,7 @@ private fun SuggestionChip(text: String, onClick: () -> Unit) {
             .fillMaxWidth()
             .clip(RoundedCornerShape(dimensionResource(R.dimen.group_corner)))
             .background(MaterialTheme.colorScheme.surfaceContainerLow)
-            .clickable(role = Role.Button, onClick = onClick)
+            .clickable(role = SemanticsRole.Button, onClick = onClick)
             .padding(
                 horizontal = dimensionResource(R.dimen.space_l),
                 vertical = dimensionResource(R.dimen.space_m),
