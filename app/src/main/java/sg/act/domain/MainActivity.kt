@@ -18,6 +18,7 @@ import androidx.navigation.compose.rememberNavController
 import sg.act.domain.ui.acceptance.AcceptanceScreen
 import sg.act.domain.ui.chat.ChatScreen
 import sg.act.domain.ui.chat.ChatViewModel
+import sg.act.domain.ui.models.ModelsScreen
 import sg.act.domain.ui.settings.SettingsScreen
 import sg.act.domain.ui.settings.SettingsViewModel
 import sg.act.domain.ui.theme.DomainTheme
@@ -25,6 +26,7 @@ import sg.act.domain.ui.theme.DomainTheme
 private object Routes {
     const val CHAT = "chat"
     const val SETTINGS = "settings"
+    const val MODELS = "models"
 }
 
 class MainActivity : ComponentActivity() {
@@ -46,6 +48,23 @@ class MainActivity : ComponentActivity() {
                         return@Surface
                     }
                     val navController = rememberNavController()
+
+                    // Hoisted out of the NavHost so Settings and Models share one
+                    // instance. Created per-destination, each would own a separate
+                    // copy of the same model state and a separate set of collectors
+                    // on the same flows — and the two would disagree the moment one
+                    // was recreated. This owner is the Activity, so the state also
+                    // survives navigating between them.
+                    val settingsViewModel: SettingsViewModel = viewModel(
+                        factory = SettingsViewModel.Factory(
+                            application,
+                            container.repository,
+                            container.modelManager,
+                            container.deviceCapabilities,
+                            container.modelProfileStore,
+                        ),
+                    )
+
                     NavHost(navController = navController, startDestination = Routes.CHAT) {
                         composable(Routes.CHAT) {
                             val vm: ChatViewModel = viewModel(
@@ -61,17 +80,15 @@ class MainActivity : ComponentActivity() {
                             )
                         }
                         composable(Routes.SETTINGS) {
-                            val vm: SettingsViewModel = viewModel(
-                                factory = SettingsViewModel.Factory(
-                                    application,
-                                    container.repository,
-                                    container.modelManager,
-                                    container.deviceCapabilities,
-                                    container.modelProfileStore,
-                                ),
-                            )
                             SettingsScreen(
-                                viewModel = vm,
+                                viewModel = settingsViewModel,
+                                onBack = { navController.popBackStack() },
+                                onOpenModels = { navController.navigate(Routes.MODELS) },
+                            )
+                        }
+                        composable(Routes.MODELS) {
+                            ModelsScreen(
+                                viewModel = settingsViewModel,
                                 onBack = { navController.popBackStack() },
                             )
                         }

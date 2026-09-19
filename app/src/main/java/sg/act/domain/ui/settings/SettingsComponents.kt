@@ -199,6 +199,49 @@ fun SettingsSection(
 }
 
 /**
+ * A row that opens another screen, rather than revealing content in place.
+ *
+ * Same shape as [SettingsSection] collapsed — title, current state, trailing
+ * glyph — because from the user's side they are the same gesture: "show me more
+ * about this". The chevron direction is the only tell, and it is the honest one:
+ * down means it unfolds here, right means you are going somewhere.
+ */
+@Composable
+fun SettingsNavRow(
+    title: String,
+    status: String?,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(role = Role.Button, onClick = onClick)
+            .padding(
+                horizontal = dimensionResource(R.dimen.space_l),
+                vertical = dimensionResource(R.dimen.space_m),
+            ),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(dimensionResource(R.dimen.space_m)),
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge)
+            if (status != null) {
+                Text(
+                    status,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        Icon(
+            Icons.AutoMirrored.Filled.KeyboardArrowRight,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+/**
  * An inline "tell me more" toggle: a quiet label that reveals a paragraph.
  *
  * This is where the explanatory text that used to sit under every control now

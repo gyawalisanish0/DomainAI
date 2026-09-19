@@ -197,6 +197,7 @@
     <string name="inference_panel_performance">Performance</string>
 
     <!-- On-device model section -->
+    <string name="models_title">On-device model</string>
     <string name="settings_section_model">On-device model</string>
     <string name="model_device_ram">Device RAM: %1$d MB</string>
     <string name="model_state_none">No model loaded — answering with the offline responder.</string>
