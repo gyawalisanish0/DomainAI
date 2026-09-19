@@ -17,19 +17,25 @@ import sg.act.domain.inference.ProviderType
  * Profiles are stored as flat key-value pairs keyed by UUID, avoiding any
  * dependency on a serialization framework.
  */
-class ModelProfileStore(context: Context) {
+class ModelProfileStore(private val context: Context) {
 
-    private val masterKey = MasterKey.Builder(context)
-        .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-        .build()
-
-    private val prefs = EncryptedSharedPreferences.create(
-        context,
-        "oracle_model_profiles",
-        masterKey,
-        EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-        EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
-    )
+    // Lazy, because building a hardware-backed master key and opening a Tink
+    // keyset is not free, and eager construction put that cost in
+    // Application.onCreate() — on the main thread, before the first frame.
+    // AppContainer warms this on a background coroutine at startup, so the work
+    // still happens early; it just no longer blocks the launch.
+    private val prefs by lazy {
+        val masterKey = MasterKey.Builder(context)
+            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+            .build()
+        EncryptedSharedPreferences.create(
+            context,
+            "oracle_model_profiles",
+            masterKey,
+            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
+        )
+    }
 
     private val _profiles = MutableStateFlow<List<ModelProfile>>(emptyList())
     val profiles: StateFlow<List<ModelProfile>> = _profiles.asStateFlow()
@@ -37,19 +43,39 @@ class ModelProfileStore(context: Context) {
     private val _activeProfileId = MutableStateFlow<String?>(null)
     val activeProfileId: StateFlow<String?> = _activeProfileId.asStateFlow()
 
-    init {
+    @Volatile
+    private var loaded = false
+
+    /**
+     * Read persisted state into the flows. Idempotent and safe from any thread.
+     *
+     * This used to be an `init` block, which made constructing the store — and
+     * therefore constructing [AppContainer][sg.act.domain.AppContainer] — pay for
+     * the keystore on the main thread at launch. Every mutator calls this first,
+     * so a write can never persist a list assembled before the existing one was
+     * read; [warmUp] gets it done early on a background coroutine regardless.
+     */
+    @Synchronized
+    fun ensureLoaded() {
+        if (loaded) return
         _profiles.value = loadProfiles()
         val id = prefs.getString(KEY_ACTIVE_ID, null)
         _activeProfileId.value = id.takeIf { id != null && _profiles.value.any { p -> p.id == id } }
+        loaded = true
     }
 
+    /** Do the keystore work and the first read now, off the critical path. */
+    fun warmUp() = ensureLoaded()
+
     fun upsertProfile(profile: ModelProfile) {
+        ensureLoaded()
         val updated = _profiles.value.filterNot { it.id == profile.id } + profile
         _profiles.value = updated
         persistProfiles(updated)
     }
 
     fun deleteProfile(id: String) {
+        ensureLoaded()
         if (_activeProfileId.value == id) setActiveProfileId(null)
         val updated = _profiles.value.filterNot { it.id == id }
         _profiles.value = updated
@@ -62,12 +88,14 @@ class ModelProfileStore(context: Context) {
     }
 
     fun renameProfile(id: String, name: String) {
+        ensureLoaded()
         val updated = _profiles.value.map { if (it.id == id) it.copy(name = name) else it }
         _profiles.value = updated
         persistProfiles(updated)
     }
 
     fun setActiveProfileId(id: String?) {
+        ensureLoaded()
         _activeProfileId.value = id
         if (id != null) prefs.edit().putString(KEY_ACTIVE_ID, id).apply()
         else prefs.edit().remove(KEY_ACTIVE_ID).apply()

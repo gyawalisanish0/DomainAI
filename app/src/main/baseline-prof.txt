@@ -1,0 +1,75 @@
+# Baseline profile — ART rules for Domain AI's own classes.
+#
+# WHAT THIS DOES
+# Without a baseline profile, every class and method on the startup path is
+# interpreted and then JIT-compiled the first time it runs. That cost is paid on
+# the user's first launch (and again after every update, until ART's background
+# profiling catches up). A baseline profile ships a list of methods to compile
+# AOT at install time, so the first launch is as fast as the tenth.
+#
+# WHERE IT APPLIES
+# Release builds only. androidx.profileinstaller writes these rules into ART on
+# Android 9+ (API 28); below that the file is inert. Debug builds are unaffected
+# — a debug APK installed from CI will not show any of this improvement.
+#
+# WHY THESE RULES AND NOT A GENERATED PROFILE
+# The precise way to produce this file is the androidx.baselineprofile Gradle
+# plugin driving a Macrobenchmark run on a real device or managed emulator,
+# which records exactly the methods a startup executes. That needs device
+# infrastructure this project's CI does not have, so these are hand-written
+# wildcard rules over the packages a launch is known to touch. That is coarser
+# — it compiles more than a launch strictly needs, costing a little install time
+# and dex size — but it captures the startup path, which is the point.
+#
+# Replace this file with a generated one if device-backed CI ever exists; see
+# https://developer.android.com/topic/performance/baselineprofiles/overview
+#
+# SYNTAX
+#   H = "hot"     — called often, compile it
+#   S = "startup" — runs during startup
+#   P = "post-startup"
+#   L<class>;-><method>(<params>)<return>
+# Wildcards (** for any path/name) are expanded against the APK's DEX at build
+# time by profgen.
+#
+# Note: AndroidX and Compose libraries ship their own baseline profiles, which
+# AGP merges with this one. Do not duplicate their rules here — this file is
+# only for code in this repository.
+
+# --- Application startup: the container and everything it constructs ---------
+HSPLsg/act/domain/DomainApp;->**(**)**
+HSPLsg/act/domain/AppContainer;->**(**)**
+HSPLsg/act/domain/MainActivity;->**(**)**
+
+# --- Persistence touched during launch ---------------------------------------
+# The encrypted stores are warmed on a background thread at startup, so their
+# init path is hot even though it no longer blocks the first frame.
+HSPLsg/act/domain/data/local/**->**(**)**
+HSPLsg/act/domain/data/repository/**->**(**)**
+HSPLsg/act/domain/data/model/**->**(**)**
+
+# --- Privacy layer: evaluated for the first frame's banner and routing --------
+HSPLsg/act/domain/privacy/**->**(**)**
+
+# --- Inference wiring --------------------------------------------------------
+# Construction and the adaptive plan run at startup. Generation itself is
+# dominated by native code, so the Kotlin side here is startup-shaped, not
+# throughput-shaped.
+HSPLsg/act/domain/inference/**->**(**)**
+HSPLsg/act/domain/llama/**->**(**)**
+
+# --- UI: composed for the first frame ----------------------------------------
+HSPLsg/act/domain/ui/theme/**->**(**)**
+HSPLsg/act/domain/ui/chat/**->**(**)**
+HSPLsg/act/domain/ui/components/**->**(**)**
+HSPLsg/act/domain/ui/acceptance/**->**(**)**
+
+# --- Settings: not startup, but the first navigation people make -------------
+HSPLsg/act/domain/ui/settings/**->**(**)**
+
+# --- Core utilities ----------------------------------------------------------
+HSPLsg/act/domain/core/**->**(**)**
+
+# Class-level rules so the classes themselves are also preloaded, not just their
+# methods compiled.
+Lsg/act/domain/**;

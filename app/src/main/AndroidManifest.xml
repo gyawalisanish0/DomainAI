@@ -41,6 +41,22 @@
             android:name="firebase_crashlytics_collection_enabled"
             android:value="false" />
 
+        <!--
+          Firebase installs a ContentProvider that initializes the whole SDK
+          before Application.onCreate() runs — on the main thread, on every
+          launch, whether or not the user ever opted into crash reporting.
+
+          Since collection is off by default and stays off until consent, that
+          work is pure launch latency for the default configuration. Removing the
+          provider means Firebase is initialized by CrashReporting.setEnabled(),
+          on a background coroutine, and only for users who turned it on.
+        -->
+        <provider
+            android:name="com.google.firebase.provider.FirebaseInitProvider"
+            android:authorities="${applicationId}.firebaseinitprovider"
+            android:exported="false"
+            tools:node="remove" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"

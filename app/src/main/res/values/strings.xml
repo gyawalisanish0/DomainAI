@@ -1,10 +1,8 @@
 <resources>
     <string name="app_name">Domain AI</string>
-    <string name="tagline">Local-first AI. Your words stay on your device.</string>
 
     <!-- Chat screen -->
     <string name="chat_title">Domain AI</string>
-    <string name="chat_subtitle">Local-first AI</string>
     <string name="action_new_chat">New chat</string>
     <string name="action_history">Chat history</string>
     <string name="history_title">Chats</string>
@@ -29,28 +27,12 @@
     <string name="empty_title">Ask Domain AI anything</string>
     <string name="empty_body">Every reply is generated on your device. Nothing leaves the phone unless you turn on cloud mode and approve what gets sent.</string>
     <string name="input_hint_local">Message Domain AI…</string>
-    <string name="input_hint_cloud">Message (will use cloud)…</string>
-    <string name="cd_cloud_on">Cloud on for this message</string>
-    <string name="cd_local_only">Local only</string>
 
     <!-- Routing badges -->
     <string name="badge_local">On-device</string>
     <string name="badge_cloud">Cloud</string>
     <string name="badge_blocked">Blocked</string>
     <string name="sent_redacted">Sent (redacted): “%1$s”</string>
-
-    <!-- Privacy banner -->
-    <string name="banner_killswitch">Kill switch ON · fully offline</string>
-    <string name="banner_cloud_allowed">Cloud allowed · local by default</string>
-    <string name="banner_local_only">Local only · cloud not consented</string>
-
-    <!-- Cloud review dialog -->
-    <string name="dialog_cloud_title">Review before sending to cloud</string>
-    <string name="dialog_cloud_intro">This message will leave your device. Here is exactly what the cloud provider will receive:</string>
-    <string name="dialog_redacted_count">Redacted %1$d item(s): %2$s</string>
-    <string name="dialog_no_pii">No personal information was detected to redact.</string>
-    <string name="dialog_send_cloud">Send to cloud</string>
-    <string name="dialog_keep_local">Keep on-device</string>
 
     <!-- Settings screen -->
     <string name="settings_title">Privacy &amp; Settings</string>
@@ -76,9 +58,6 @@
     <string name="setting_api_key">API key</string>
     <string name="setting_model">Model</string>
     <string name="setting_save_provider">Save provider</string>
-    <string name="setting_clear_provider">Clear</string>
-    <string name="setting_provider_saved">Provider saved (stored encrypted on-device).</string>
-    <string name="setting_provider_cleared">Provider cleared.</string>
 
     <!-- First-launch acceptance (Terms of Service + Privacy Policy) -->
     <string name="accept_title">Welcome to Domain AI</string>
@@ -95,11 +74,8 @@
     <string name="cd_model_picker">Choose model</string>
     <string name="model_picker_title">Choose model</string>
     <string name="model_picker_local">On-device</string>
-    <string name="model_picker_cloud">Cloud</string>
     <string name="model_picker_offline">Offline responder</string>
     <string name="model_picker_no_local">No on-device model yet. Download or import one in Settings.</string>
-    <string name="model_picker_no_cloud">No cloud model set. Add one in Settings.</string>
-    <string name="model_label_cloud">%1$s · Cloud</string>
     <string name="chip_offline">Offline</string>
 
     <!-- Installed models list -->
@@ -208,11 +184,8 @@
     <string name="model_state_loading">Loading %1$s…</string>
     <string name="model_state_ready">Active: %1$s</string>
     <string name="model_state_error">Model error: %1$s</string>
-    <string name="model_downloading">Downloading… %1$d%%</string>
     <string name="model_download_detail">Downloading %1$s — %2$d%% (%3$s / %4$s)</string>
     <string name="model_initializing">Initializing model…</string>
-    <string name="model_retry">Retry</string>
-    <string name="model_ready_check">✓ Ready</string>
     <string name="model_download">Download</string>
     <string name="model_import">Import .gguf</string>
     <string name="model_unload">Unload</string>
@@ -251,11 +224,8 @@
     <string name="cd_typing">Generating a reply</string>
 
     <!-- Active cloud provider / validation -->
-    <string name="provider_active">Connected · %1$s</string>
-    <string name="provider_delete">Delete API key</string>
     <string name="provider_validating">Validating connection…</string>
     <string name="provider_invalid">Couldn\'t validate: %1$s</string>
-    <string name="provider_locked_hint">To switch provider or model, delete the current API key first.</string>
 
     <!-- On-device work notification (download + background generation) -->
     <string name="notif_channel_name">On-device activity</string>
@@ -266,7 +236,6 @@
     <string name="notif_working">Working…</string>
 
     <!-- OpenRouter free models -->
-    <string name="settings_section_openrouter">OpenRouter free models</string>
     <string name="openrouter_hint">Needs a free OpenRouter key; may log prompts — enable \"Allow data-logging models\" above.</string>
     <string name="openrouter_key_label">OpenRouter API key</string>
     <string name="openrouter_fetch">Fetch free models</string>
@@ -275,10 +244,8 @@
     <string name="openrouter_use">Use</string>
     <string name="openrouter_logs_tag">logs data</string>
     <string name="openrouter_ctx">%1$dk ctx</string>
-    <string name="openrouter_active">Active cloud model: %1$s</string>
 
     <!-- Self-hosted Space backend -->
-    <string name="settings_section_space">Space backend</string>
     <string name="space_hint">Connect to your self-hosted HF Docker Space running llama.cpp. Enter the Space URL and your SPACE_TOKEN to browse and load models remotely.</string>
     <string name="space_url_label">Space URL</string>
     <string name="space_token_label">Space token</string>
@@ -297,14 +264,12 @@
     <string name="space_loading_in_progress">Space is loading a model — use Load to track progress.</string>
     <string name="space_prev_load_error">Previous load failed: %1$s</string>
     <string name="space_connected_to">Connected: %1$s</string>
-    <string name="space_change">Change</string>
     <string name="space_disconnect">Disconnect</string>
 
     <!-- OpenRouter key persistence -->
     <string name="openrouter_key_saved">OpenRouter key saved</string>
     <string name="openrouter_change_key">Change key</string>
     <string name="openrouter_remove_key">Remove key</string>
-    <string name="openrouter_add_profile">Add profile</string>
 
     <!-- Saved inference profiles -->
     <string name="settings_section_my_server">My server</string>
@@ -322,5 +287,4 @@
     <string name="profile_type_space">My server</string>
     <string name="profile_type_openrouter">OpenRouter</string>
     <string name="profile_type_custom">Custom</string>
-    <string name="advanced_endpoint_add_profile">Add profile</string>
 </resources>

@@ -67,11 +67,15 @@ class DeviceCapabilities(context: Context) {
 
     /**
      * All core indices ordered **fastest first** (empty if `/sys` is unreadable).
+     *
+     * Lazy: this reads one `/sys` file per core, which does not belong on the
+     * main thread during launch. Topology never changes, so it is computed once
+     * on whichever thread asks first — in practice the background model load.
      * The inference threadpool pins to the first `threads` of these, so a smaller
      * thread count naturally keeps generation on the primary/big cores. Pinning is
      * best-effort — Android's cpuset/EAS scheduler may override it.
      */
-    val coresBySpeed: IntArray = computeCoresBySpeed()
+    val coresBySpeed: IntArray by lazy { computeCoresBySpeed() }
 
     private fun memoryInfo(): ActivityManager.MemoryInfo =
         ActivityManager.MemoryInfo().also { activityManager.getMemoryInfo(it) }

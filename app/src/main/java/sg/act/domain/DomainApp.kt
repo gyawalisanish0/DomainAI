@@ -48,15 +48,19 @@ class AppContainer(app: DomainApp) {
 
     val deviceCapabilities = DeviceCapabilities(app)
 
+    private val modelStore = ModelStore(app)
+
     val modelManager = ModelManager(
         context = app,
-        modelStore = ModelStore(app),
+        modelStore = modelStore,
         modelStorage = ModelStorage(app),
         scope = appScope,
         // A provider, so each load re-reads the phone's current memory/thermal
         // state instead of replaying a plan made at process start.
         plan = deviceCapabilities::plan,
-        coresBySpeed = deviceCapabilities.coresBySpeed,
+        // A lambda, not the value: reading the CPU topology out of /sys is lazy
+        // and must not be forced here, on the main thread, at launch.
+        coresBySpeed = { deviceCapabilities.coresBySpeed },
         contextSettings = ContextSettings(app),
         threadSettings = ThreadSettings(app),
         gpuGuard = GpuGuard(app),
@@ -101,29 +105,44 @@ class AppContainer(app: DomainApp) {
         // UI scope dies with the Activity; this covers a download on the app scope.
         ForegroundWork.onStopRequested = { modelManager.cancelDownload() }
 
-        // One-time migration: import a legacy single RemoteConfig into the profile store.
-        if (modelProfileStore.profiles.value.isEmpty()) {
-            remoteConfigStore.load()?.let { legacy ->
-                val type = if (legacy.baseUrl.contains("openrouter.ai")) ProviderType.OPEN_ROUTER else ProviderType.CUSTOM
-                val profile = ModelProfile(
-                    id = java.util.UUID.randomUUID().toString(),
-                    name = ModelProfile.autoName(type, legacy.model, legacy.baseUrl),
-                    type = type,
-                    baseUrl = legacy.baseUrl,
-                    apiKey = legacy.apiKey,
-                    model = legacy.model,
-                    logsData = legacy.logsData,
-                )
-                modelProfileStore.upsertProfile(profile)
-                if (selectionStore.preferCloud()) modelProfileStore.setActiveProfileId(profile.id)
+        // Everything below runs off the main thread on purpose. Each encrypted
+        // store builds a hardware-backed master key and opens a Tink keyset; doing
+        // that during Application.onCreate() delayed the first frame by the sum of
+        // all of them. They are lazy now, and this warms them so the cost lands
+        // here, in parallel with UI inflation, rather than later as a stall when a
+        // screen first needs one.
+        appScope.launch {
+            modelStore.warmUp()
+            modelProfileStore.warmUp()
+
+            // One-time migration: import a legacy single RemoteConfig into the
+            // profile store. Ordered after warmUp() deliberately — profiles.value
+            // is only trustworthy once the store has read what was persisted.
+            if (modelProfileStore.profiles.value.isEmpty()) {
+                remoteConfigStore.load()?.let { legacy ->
+                    val type = if (legacy.baseUrl.contains("openrouter.ai")) ProviderType.OPEN_ROUTER else ProviderType.CUSTOM
+                    val profile = ModelProfile(
+                        id = java.util.UUID.randomUUID().toString(),
+                        name = ModelProfile.autoName(type, legacy.model, legacy.baseUrl),
+                        type = type,
+                        baseUrl = legacy.baseUrl,
+                        apiKey = legacy.apiKey,
+                        model = legacy.model,
+                        logsData = legacy.logsData,
+                    )
+                    modelProfileStore.upsertProfile(profile)
+                    if (selectionStore.preferCloud()) modelProfileStore.setActiveProfileId(profile.id)
+                }
             }
+
+            // Re-load the previously active on-device model.
+            modelManager.loadActiveModelIfPresent()
         }
 
-        // Re-load the previously active on-device model, off the main thread.
-        appScope.launch { modelManager.loadActiveModelIfPresent() }
-
         // Crash reporting: inert unless Firebase is configured, and gated on the
-        // user's opt-in (off by default). Mirror the live setting into Crashlytics.
+        // user's opt-in (off by default). Firebase's own auto-init provider is
+        // removed in the manifest, so this collector is what starts the SDK — on
+        // this background coroutine, and only once consent is actually on.
         CrashReporting.init(app)
         appScope.launch {
             repository.privacyState.collect { CrashReporting.setEnabled(it.crashReportingEnabled) }

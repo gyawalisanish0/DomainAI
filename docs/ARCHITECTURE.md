@@ -221,6 +221,38 @@ to the planned value only when nothing is loaded. `ChatRepository` budgets histo
 against it, and re-planning between loads must not leave that budget quoting a window
 the context doesn't have.
 
+### Startup
+
+`Application.onCreate()` is on the critical path to the first frame, so it holds
+almost nothing. What used to be there, and where it went:
+
+| Was | Cost | Now |
+|-----|------|-----|
+| Firebase's `FirebaseInitProvider` | Whole SDK initialized before `onCreate`, every launch | Provider removed in the manifest; `CrashReporting.setEnabled` initializes it, on a background coroutine, **only when the user has opted in** |
+| Three `MasterKey` + `EncryptedSharedPreferences` builds | A hardware-backed key and a Tink keyset each | `by lazy`, warmed together on one background coroutine |
+| `ModelProfileStore` reading profiles in `init` | Keystore + decrypt, synchronous | `ensureLoaded()`, idempotent, called by that warm-up and by every mutator |
+| `DeviceCapabilities.coresBySpeed` | One `/sys` read per core | `by lazy`; `ModelManager` takes a provider so construction doesn't force it |
+| `CpuFeatures.deviceHasDotprod()` | `/proc/self/auxv` read | Inside `ModelManager`'s existing startup coroutine |
+
+Two points worth keeping. **Lazy alone would not have been enough**: it removes
+the cost from launch but leaves it to ambush whichever screen touches a store
+first. Lazy *plus* a background warm-up moves the work off the critical path
+while still finishing it early. And the Firebase change is as much a privacy
+decision as a performance one — an app whose premise is that it does nothing you
+didn't ask for should not be starting a telemetry SDK for a user who declined
+it.
+
+The trade accepted with the provider removal: a crash in the first moments of a
+launch, before the consent value has been read back, is not captured.
+
+`app/src/main/baseline-prof.txt` supplies ART rules so the startup path ships
+AOT-compiled rather than being JIT'd on first run. It applies to **release
+builds only** — a debug APK sees none of it — and the rules are hand-written
+wildcards over this repo's packages, which is coarser than a profile generated
+by a Macrobenchmark run on a real device. Replace it with a generated one if
+device-backed CI ever exists. AndroidX and Compose ship their own profiles,
+which AGP merges in; this file covers only our own code.
+
 ### Streaming
 
 `InferenceEngine.generate` returns `Flow<String>`. `PrivacyRouter` decides

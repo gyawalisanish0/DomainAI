@@ -56,8 +56,12 @@ class ModelManager(
      * freed memory gets the larger plan without a restart.
      */
     private val plan: () -> AdaptivePlan,
-    /** All core indices ordered fastest-first; the threadpool pins to the first N. */
-    private val coresBySpeed: IntArray,
+    /**
+     * All core indices ordered fastest-first; the threadpool pins to the first N.
+     * A provider, so reading the CPU topology out of `/sys` stays off the launch
+     * path — it is only needed when a model actually loads.
+     */
+    private val coresBySpeed: () -> IntArray,
     /** User's context-length choice (0 = Auto). Read at each load. */
     private val contextSettings: ContextSettings,
     /** User's thread-count choice (0 = Auto). Read at each load. */
@@ -128,11 +132,15 @@ class ModelManager(
 
     init {
         llama.configure(nativeLibDir, sdkInt)
-        // Recorded, not enforced: the native build targets baseline armv8-a, so
-        // dotprod is no longer required to load a model. The value is still worth
-        // logging — it is the input a future per-tier runtime dispatch would need.
-        CpuFeatures.deviceHasDotprod()
-        scope.launch { refreshInstalled() }
+        scope.launch {
+            // Recorded, not enforced: the native build targets baseline armv8-a,
+            // so dotprod is no longer required to load a model. The value is
+            // still worth logging — it is the input a future per-tier runtime
+            // dispatch would need. Off the main thread: it reads /proc/self/auxv,
+            // and this runs during Application.onCreate().
+            CpuFeatures.deviceHasDotprod()
+            refreshInstalled()
+        }
     }
 
     /** Provider handed to [LocalEngine]; null means the offline fallback answers. */
@@ -510,8 +518,9 @@ class ModelManager(
         val contextTokens = plannedContextTokens(p)
         // Pin to the fastest `threads` cores so generation stays on the big cluster;
         // empty when /sys was unreadable, in which case the native side skips pinning.
-        val affinity = if (coresBySpeed.isNotEmpty()) {
-            coresBySpeed.take(threads).toIntArray()
+        val ordered = coresBySpeed()
+        val affinity = if (ordered.isNotEmpty()) {
+            ordered.take(threads).toIntArray()
         } else {
             IntArray(0)
         }

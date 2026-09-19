@@ -19,6 +19,16 @@ All notable changes to Domain AI are documented here. This project adheres to
   to keep the cross-compile lean. It supplies the blocked matmul path that prompt
   prefill leans on, for well under 1 MB of APK. Its quantized ARM kernels are gated on
   dot product, so at this build's baseline the gain is limited to the f32/f16 paths.
+- **Faster cold start.** `Application.onCreate()` was doing a surprising amount of work
+  before the first frame: Firebase initialized its entire SDK from a ContentProvider on
+  every launch, three separate encrypted stores each built a hardware-backed master key
+  and opened a Tink keyset, one of them read and decrypted the profile list
+  synchronously, and two more reads went to `/sys` and `/proc`. All of it is lazy now
+  and warmed on a background coroutine, so it still runs early but no longer blocks the
+  launch. Firebase is not initialized at all unless crash reporting is switched on —
+  the right default for an app that ships no telemetry, quite apart from the speed.
+- **Baseline profile.** Release builds now carry ART rules for the startup path, so a
+  first launch runs AOT-compiled instead of being JIT'd. Debug builds are unaffected.
 
 ### Changed
 - **No CPU requirement beyond baseline arm64.** On-device inference still runs on every
@@ -51,6 +61,9 @@ All notable changes to Domain AI are documented here. This project adheres to
 - Your own messages now have a copy control too, alongside edit.
 
 ### Internal
+- 32 unreferenced string resources removed (264 → 232): leftovers from a pre-send
+  cloud review dialog, an older privacy banner and a previous model picker, all of
+  whose code is long gone. None had a caller in Kotlin or XML.
 - Both new actions rewind the conversation and then go back through the ordinary send
   path, so routing, redaction, history budgeting and encrypted persistence behave
   identically to a fresh message. The rewind rules (what is dropped, what the rolling
