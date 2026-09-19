@@ -57,17 +57,21 @@
     <string name="settings_section_privacy">Privacy</string>
     <string name="settings_section_cloud">Cloud</string>
     <string name="advanced_endpoint_title">Advanced: custom endpoint</string>
-    <string name="advanced_endpoint_summary">Point Domain AI at any OpenAI-compatible API.</string>
+    <string name="advanced_endpoint_summary">Any OpenAI-compatible API</string>
+    <!--
+      Switch labels carry no permanent summary: the title states the control, and
+      the reasoning lives in privacy_about_body, one tap away. The single subtitle
+      that remains marks a consequence the title genuinely cannot carry — that
+      allowing these models means accepting they may train on what you type.
+    -->
     <string name="setting_killswitch_title">Network kill switch</string>
-    <string name="setting_killswitch_summary">Blocks all network access — fully offline.</string>
     <string name="setting_consent_title">Allow cloud mode</string>
-    <string name="setting_consent_summary">Required before any message can use the cloud.</string>
     <string name="setting_redact_title">Redact before sending</string>
-    <string name="setting_redact_summary">Strips emails, phone numbers and similar before any cloud send.</string>
     <string name="setting_datalog_title">Allow data-logging models</string>
-    <string name="setting_datalog_summary">Some free cloud models may log or train on your prompts. Required to use them.</string>
+    <string name="setting_datalog_summary">These models may train on your prompts</string>
     <string name="setting_crash_title">Send crash reports</string>
-    <string name="setting_crash_summary">Share crash reports to help fix bugs. Off by default; no analytics.</string>
+    <string name="privacy_about_label">How your data is handled</string>
+    <string name="privacy_about_body">The kill switch blocks every outbound request at a single chokepoint. With it on, Domain AI is completely offline.\n\nCloud mode must be allowed before any message can leave your device, and redaction strips emails, phone numbers, card numbers and similar from a prompt before it is sent. Each cloud reply shows you the exact redacted text that was sent.\n\nSome free cloud models log or train on prompts. Those stay unavailable unless you allow them.\n\nCrash reports are off by default and never contain conversation content. Domain AI has no analytics and no trackers, and your conversations are encrypted on this device with a hardware-backed key.</string>
     <string name="setting_base_url">Base URL (OpenAI-compatible)</string>
     <string name="setting_api_key">API key</string>
     <string name="setting_model">Model</string>
@@ -75,7 +79,6 @@
     <string name="setting_clear_provider">Clear</string>
     <string name="setting_provider_saved">Provider saved (stored encrypted on-device).</string>
     <string name="setting_provider_cleared">Provider cleared.</string>
-    <string name="settings_footer">Domain AI collects no analytics and contains no trackers. Conversations are encrypted on-device with a hardware-backed key.</string>
 
     <!-- First-launch acceptance (Terms of Service + Privacy Policy) -->
     <string name="accept_title">Welcome to Domain AI</string>
@@ -108,9 +111,27 @@
     <string name="model_use">Use</string>
     <string name="model_none_installed">No models yet. Download one below or import a .gguf.</string>
 
+    <string name="settings_group_models">Models</string>
+    <string name="settings_group_about">About</string>
+
+    <!-- Collapsed-section status lines: the answer without the tap -->
+    <string name="settings_status_model_none">No model loaded</string>
+    <string name="settings_status_model_loading">Loading\u2026</string>
+    <string name="settings_status_model_error">Could not load</string>
+    <string name="settings_status_installed">%1$d installed</string>
+    <string name="settings_status_space_connected">Connected \u00b7 %1$s</string>
+    <string name="settings_status_space_saved">Saved \u00b7 %1$s</string>
+    <string name="settings_status_space_none">Not connected</string>
+    <string name="settings_status_cloud_saved">OpenRouter key saved</string>
+    <string name="settings_status_cloud_none">Not configured</string>
+    <string name="settings_status_profiles">%1$d saved \u00b7 %2$s active</string>
+    <string name="settings_status_profiles_inactive">%1$d saved \u00b7 none active</string>
+    <string name="settings_status_profiles_none">None yet</string>
+    <string name="cd_expand_section">Expand %1$s</string>
+    <string name="cd_collapse_section">Collapse %1$s</string>
+
     <!-- System info -->
     <string name="settings_section_system">System info</string>
-    <string name="system_summary">What Domain AI has detected about this device, and how it has chosen to run on it. Useful in a bug report.</string>
     <string name="system_group_device">Device</string>
     <string name="system_group_cpu">Processor</string>
     <string name="system_group_engine">Inference engine</string>
@@ -150,26 +171,26 @@
 
     <!-- Diagnostics (debug builds only) -->
     <string name="settings_section_diagnostics">Diagnostics</string>
-    <string name="diagnostics_summary">Share this app\'s logs as a text file. Debug builds only.</string>
+    <string name="diagnostics_summary">Debug builds only</string>
     <string name="action_share_diagnostics">Share app logs</string>
 
     <!-- GPU offload + speed benchmark -->
     <string name="setting_gpu_title">GPU acceleration</string>
-    <string name="setting_gpu_summary">Offload layers to the GPU when supported; falls back to CPU automatically. Benchmark to compare.</string>
+    <string name="setting_gpu_summary">Falls back to CPU automatically</string>
     <string name="action_benchmark">Benchmark speed</string>
     <string name="benchmark_running">Benchmarking…</string>
     <string name="benchmark_result">%1$s tok/s · prefill %2$d ms · %3$d tokens (%4$s)</string>
 
     <!-- Context length (user-configurable) -->
     <string name="setting_context_title">Context length</string>
-    <string name="setting_context_summary">How much conversation the model remembers. Larger uses more memory.</string>
+    <string name="setting_context_summary">Larger uses more memory</string>
     <string name="context_auto_label">Auto (%1$d)</string>
     <string name="context_tokens_label">%1$d tokens</string>
     <string name="cd_context_menu">Choose context length</string>
 
     <!-- Generation threads (user-configurable) -->
     <string name="setting_threads_title">Generation threads</string>
-    <string name="setting_threads_summary">CPU cores used to generate replies. More can be faster but warmer.</string>
+    <string name="setting_threads_summary">More can be faster, but warmer</string>
     <string name="threads_auto_label">Auto (%1$d)</string>
     <string name="threads_count_label">%1$d threads</string>
     <string name="cd_threads_menu">Choose generation threads</string>

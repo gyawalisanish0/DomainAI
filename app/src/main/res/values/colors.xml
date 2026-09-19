@@ -24,6 +24,16 @@
     <color name="surface">#FFFFFF</color>
     <color name="on_surface">#101412</color>
     <color name="surface_variant">#E6EDE9</color>
+    <!--
+      M3 container ramp. Without these, Compose falls back to Material's default
+      purple-tinted neutrals, which clash visibly with this green-tinted palette
+      wherever a card or grouped surface is drawn.
+    -->
+    <color name="surface_container_lowest">#FFFFFF</color>
+    <color name="surface_container_low">#F1F5F2</color>
+    <color name="surface_container">#ECF1EE</color>
+    <color name="surface_container_high">#E6ECE8</color>
+    <color name="surface_container_highest">#E0E7E2</color>
     <color name="on_surface_variant">#42493F</color>
     <color name="outline">#72796F</color>
     <color name="error">#B3261E</color>

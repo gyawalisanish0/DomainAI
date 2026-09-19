@@ -132,90 +132,112 @@ fun SettingsScreen(
                 .fillMaxSize()
                 .padding(padding)
                 .verticalScroll(rememberScrollState())
-                .padding(dimensionResource(R.dimen.space_l)),
-            verticalArrangement = Arrangement.spacedBy(dimensionResource(R.dimen.space_l)),
+                .padding(horizontal = dimensionResource(R.dimen.space_l))
+                .padding(bottom = dimensionResource(R.dimen.space_xl)),
+            verticalArrangement = Arrangement.spacedBy(dimensionResource(R.dimen.space_s)),
         ) {
-            SectionTitle(stringResource(R.string.settings_section_privacy))
+            SettingsHeader(stringResource(R.string.settings_section_privacy))
+            SettingsGroup {
+                SettingsSwitchRow(
+                    title = stringResource(R.string.setting_killswitch_title),
+                    checked = state.privacy.networkKillSwitch,
+                    onCheckedChange = viewModel::setKillSwitch,
+                )
+                SettingsSwitchRow(
+                    title = stringResource(R.string.setting_consent_title),
+                    checked = state.privacy.cloudConsentGiven,
+                    onCheckedChange = viewModel::setConsent,
+                )
+                SettingsSwitchRow(
+                    title = stringResource(R.string.setting_redact_title),
+                    checked = state.privacy.redactBeforeCloud,
+                    onCheckedChange = viewModel::setRedact,
+                )
+                SettingsSwitchRow(
+                    title = stringResource(R.string.setting_datalog_title),
+                    subtitle = stringResource(R.string.setting_datalog_summary),
+                    checked = state.privacy.allowDataLoggingModels,
+                    onCheckedChange = viewModel::setAllowDataLogging,
+                )
+                SettingsSwitchRow(
+                    title = stringResource(R.string.setting_crash_title),
+                    checked = state.privacy.crashReportingEnabled,
+                    onCheckedChange = viewModel::setCrashReporting,
+                )
+                HorizontalDivider(color = MaterialTheme.colorScheme.surfaceContainerHigh)
+                // Everything the five rows above used to say in permanent subtitles,
+                // plus the old page footer, in one place nobody has to read.
+                SettingsDisclosure(
+                    label = stringResource(R.string.privacy_about_label),
+                    body = stringResource(R.string.privacy_about_body),
+                )
+            }
 
-            SwitchRow(
-                title = stringResource(R.string.setting_killswitch_title),
-                summary = stringResource(R.string.setting_killswitch_summary),
-                checked = state.privacy.networkKillSwitch,
-                onCheckedChange = viewModel::setKillSwitch,
-            )
-            SwitchRow(
-                title = stringResource(R.string.setting_consent_title),
-                summary = stringResource(R.string.setting_consent_summary),
-                checked = state.privacy.cloudConsentGiven,
-                onCheckedChange = viewModel::setConsent,
-            )
-            SwitchRow(
-                title = stringResource(R.string.setting_redact_title),
-                summary = stringResource(R.string.setting_redact_summary),
-                checked = state.privacy.redactBeforeCloud,
-                onCheckedChange = viewModel::setRedact,
-            )
-            SwitchRow(
-                title = stringResource(R.string.setting_datalog_title),
-                summary = stringResource(R.string.setting_datalog_summary),
-                checked = state.privacy.allowDataLoggingModels,
-                onCheckedChange = viewModel::setAllowDataLogging,
-            )
-            SwitchRow(
-                title = stringResource(R.string.setting_crash_title),
-                summary = stringResource(R.string.setting_crash_summary),
-                checked = state.privacy.crashReportingEnabled,
-                onCheckedChange = viewModel::setCrashReporting,
-            )
+            SettingsHeader(stringResource(R.string.settings_group_models))
+            // Open by default: this is what people come to Settings for.
+            SettingsSection(
+                title = stringResource(R.string.settings_section_model),
+                status = modelStatus(state),
+                initiallyExpanded = true,
+            ) {
+                ModelSection(
+                    state = state,
+                    onDownload = { pendingDownload = it },
+                    onImport = { importLauncher.launch(arrayOf("*/*")) },
+                    onUnload = viewModel::unloadModel,
+                    onCancelDownload = viewModel::cancelDownload,
+                    onDismissTransfer = viewModel::dismissTransfer,
+                    onSelect = viewModel::selectModel,
+                    onDelete = viewModel::deleteModel,
+                    onSetGpu = viewModel::setGpuEnabled,
+                    onSetContext = viewModel::setContextTokens,
+                    onSetThreads = viewModel::setThreadCount,
+                    onBenchmark = viewModel::runBenchmark,
+                )
+            }
 
-            HorizontalDivider()
-            SectionTitle(stringResource(R.string.settings_section_model))
-            ModelSection(
-                state = state,
-                onDownload = { pendingDownload = it },
-                onImport = { importLauncher.launch(arrayOf("*/*")) },
-                onUnload = viewModel::unloadModel,
-                onCancelDownload = viewModel::cancelDownload,
-                onDismissTransfer = viewModel::dismissTransfer,
-                onSelect = viewModel::selectModel,
-                onDelete = viewModel::deleteModel,
-                onSetGpu = viewModel::setGpuEnabled,
-                onSetContext = viewModel::setContextTokens,
-                onSetThreads = viewModel::setThreadCount,
-                onBenchmark = viewModel::runBenchmark,
-            )
-
-            HorizontalDivider()
-            SectionTitle(stringResource(R.string.settings_section_my_server))
-            SpaceSection(
-                state = state,
-                onConnect = viewModel::connectSpace,
-                onLoadModel = viewModel::loadSpaceModel,
-                onRefresh = viewModel::refreshSpaceCatalog,
-                onDisconnect = viewModel::disconnectSpace,
-            )
-
-            HorizontalDivider()
-            SectionTitle(stringResource(R.string.settings_section_cloud_api))
-            OpenRouterSection(
-                state = state,
-                onFetch = viewModel::fetchOpenRouterModels,
-                onSelect = viewModel::selectOpenRouterModel,
-                onRemoveKey = viewModel::removeOpenRouterKey,
-            )
-            AdvancedProviderSection(onSave = viewModel::saveProvider)
-
-            HorizontalDivider()
-            SectionTitle(stringResource(R.string.settings_section_profiles))
-            SavedProfilesSection(
-                state = state,
-                onSwitch = viewModel::switchProfile,
-                onDeactivate = viewModel::deactivateProfile,
-                onDelete = viewModel::deleteProfile,
-                onRename = viewModel::renameProfile,
-            )
+            SettingsHeader(stringResource(R.string.settings_section_cloud))
+            SettingsSection(
+                title = stringResource(R.string.settings_section_my_server),
+                status = spaceStatus(state),
+            ) {
+                SpaceSection(
+                    state = state,
+                    onConnect = viewModel::connectSpace,
+                    onLoadModel = viewModel::loadSpaceModel,
+                    onRefresh = viewModel::refreshSpaceCatalog,
+                    onDisconnect = viewModel::disconnectSpace,
+                )
+            }
+            SettingsSection(
+                title = stringResource(R.string.settings_section_cloud_api),
+                status = cloudStatus(state),
+            ) {
+                OpenRouterSection(
+                    state = state,
+                    onFetch = viewModel::fetchOpenRouterModels,
+                    onSelect = viewModel::selectOpenRouterModel,
+                    onRemoveKey = viewModel::removeOpenRouterKey,
+                )
+                AdvancedProviderSection(onSave = viewModel::saveProvider)
+            }
+            SettingsSection(
+                title = stringResource(R.string.settings_section_profiles),
+                status = profilesStatus(state),
+            ) {
+                SavedProfilesSection(
+                    state = state,
+                    onSwitch = viewModel::switchProfile,
+                    onDeactivate = viewModel::deactivateProfile,
+                    onDelete = viewModel::deleteProfile,
+                    onRename = viewModel::renameProfile,
+                )
+            }
+            // Deliberately outside the sections: validation is triggered from more
+            // than one of them, and feedback nobody can see is not feedback.
             if (state.providerValidating) {
                 Row(
+                    modifier = Modifier.padding(horizontal = dimensionResource(R.dimen.space_l)),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(dimensionResource(R.dimen.space_s)),
                 ) {
@@ -234,88 +256,101 @@ fun SettingsScreen(
                     stringResource(R.string.provider_invalid, it),
                     style = MaterialTheme.typography.bodySmall,
                     color = colorResource(R.color.brand_blocked),
+                    modifier = Modifier.padding(horizontal = dimensionResource(R.dimen.space_l)),
                 )
             }
 
-            HorizontalDivider()
-            Text(
-                stringResource(R.string.settings_footer),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-
-            HorizontalDivider()
-            SectionTitle(stringResource(R.string.settings_section_system))
-            SystemInfoSection(
-                info = state.systemInfo,
-                onRefresh = viewModel::refreshSystemInfo,
-            )
+            SettingsHeader(stringResource(R.string.settings_group_about))
+            SettingsSection(
+                title = stringResource(R.string.settings_section_system),
+                status = state.systemInfo?.device,
+                onExpand = viewModel::refreshSystemInfo,
+            ) {
+                SystemInfoSection(
+                    info = state.systemInfo,
+                    onRefresh = viewModel::refreshSystemInfo,
+                )
+            }
 
             // Debug builds only: export the app's own logcat to the share sheet.
             if (BuildConfig.DEBUG) {
-                HorizontalDivider()
-                SectionTitle(stringResource(R.string.settings_section_diagnostics))
-                Text(
-                    stringResource(R.string.diagnostics_summary),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                OutlinedButton(onClick = { Diagnostics.captureAndShare(context) }) {
-                    Text(stringResource(R.string.action_share_diagnostics))
+                SettingsSection(
+                    title = stringResource(R.string.settings_section_diagnostics),
+                    status = stringResource(R.string.diagnostics_summary),
+                ) {
+                    OutlinedButton(onClick = { Diagnostics.captureAndShare(context) }) {
+                        Text(stringResource(R.string.action_share_diagnostics))
+                    }
                 }
             }
         }
     }
 }
 
+/**
+ * Status lines for the collapsed sections.
+ *
+ * A collapsed section that says only its own name is worse than no section at
+ * all: it hides information and offers nothing back. Each of these answers the
+ * question the section exists for — which model is loaded, whether the server is
+ * connected — so the common case needs no tap at all.
+ */
 @Composable
-private fun SectionTitle(text: String) {
-    Text(text, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+private fun modelStatus(state: SettingsUiState): String = when (val model = state.modelState) {
+    is ModelManager.State.Ready ->
+        listOfNotNull(model.modelName, model.detail).joinToString(" \u00b7 ")
+    is ModelManager.State.Loading -> stringResource(R.string.settings_status_model_loading)
+    is ModelManager.State.Error -> stringResource(R.string.settings_status_model_error)
+    ModelManager.State.NotLoaded ->
+        if (state.installed.isEmpty()) {
+            stringResource(R.string.settings_status_model_none)
+        } else {
+            stringResource(R.string.settings_status_installed, state.installed.size)
+        }
+}
+
+@Composable
+private fun spaceStatus(state: SettingsUiState): String = when {
+    state.spaceConnected ->
+        stringResource(R.string.settings_status_space_connected, state.spaceUrlPreview)
+    state.spaceCredentialsSaved ->
+        stringResource(R.string.settings_status_space_saved, state.spaceUrlPreview)
+    else -> stringResource(R.string.settings_status_space_none)
+}
+
+@Composable
+private fun cloudStatus(state: SettingsUiState): String = stringResource(
+    if (state.orKeySaved) R.string.settings_status_cloud_saved
+    else R.string.settings_status_cloud_none,
+)
+
+@Composable
+private fun profilesStatus(state: SettingsUiState): String {
+    if (state.savedProfiles.isEmpty()) {
+        return stringResource(R.string.settings_status_profiles_none)
+    }
+    val active = state.savedProfiles.firstOrNull { it.id == state.activeProfileId }
+    return if (active != null) {
+        stringResource(R.string.settings_status_profiles, state.savedProfiles.size, active.name)
+    } else {
+        stringResource(R.string.settings_status_profiles_inactive, state.savedProfiles.size)
+    }
 }
 
 /**
- * Settings → System info: what the app detected and how it decided to run.
- *
- * Collapsed by default — it is a diagnostic panel, not a daily control — and
- * re-sampled on expand, because thermal status and free memory are exactly the
- * values that are stale by the time anyone looks.
+ * The body of Settings → System info: what the app detected and how it decided
+ * to run. The enclosing [SettingsSection] owns the collapse and re-samples on
+ * open, so this is only the readings.
  */
 @Composable
 private fun SystemInfoSection(
     info: SystemInfo?,
     onRefresh: () -> Unit,
 ) {
-    var expanded by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
 
-    Text(
-        stringResource(R.string.system_summary),
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable {
-                expanded = !expanded
-                if (expanded) onRefresh()
-            }
-            .padding(vertical = dimensionResource(R.dimen.space_xs)),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween,
-    ) {
-        Text(
-            info?.device ?: stringResource(R.string.system_value_unknown),
-            style = MaterialTheme.typography.bodyMedium,
-        )
-        Icon(
-            if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-            contentDescription = null,
-        )
-    }
-
-    if (!expanded || info == null) return
+    if (info == null) return
 
     Column(verticalArrangement = Arrangement.spacedBy(dimensionResource(R.dimen.space_xs))) {
         InfoGroup(stringResource(R.string.system_group_device))
@@ -491,6 +526,11 @@ private fun formatMegabytes(mb: Long): String =
         String.format(Locale.US, "%.1f GB", mb / 1024.0)
     }
 
+/**
+ * The switch row used *inside* a section body, which already supplies the 16dp
+ * inset — hence no horizontal padding of its own. Top-level switches use
+ * [SettingsSwitchRow], which sits directly on a group surface and pads itself.
+ */
 @Composable
 private fun SwitchRow(
     title: String,
