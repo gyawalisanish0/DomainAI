@@ -15,10 +15,17 @@ All notable changes to Domain AI are documented here. This project adheres to
   device-adaptive logical batch, so a high-RAM phone reserved a compute buffer sized
   for 4096 tokens in exchange for prefill gains that had long since flattened. It is
   now capped independently.
+- **The dot-product kernels are back, without dropping a single device.** ggml's
+  accelerated integer kernels are compile-time gated, so one binary has to either
+  name a high CPU baseline and exclude older phones or name none and leave the
+  kernels out for everyone. The engine now ships the CPU backend built once per
+  feature tier and picks one at runtime: a modern chip gets dot product, fp16, i8mm
+  or SVE as available, and an older one gets exactly the kernels it has today. The
+  selected build is shown in Settings → System info.
 - **llamafile/tinyBLAS `sgemm` enabled** — upstream's own default, previously off only
   to keep the cross-compile lean. It supplies the blocked matmul path that prompt
-  prefill leans on, for well under 1 MB of APK. Its quantized ARM kernels are gated on
-  dot product, so at this build's baseline the gain is limited to the f32/f16 paths.
+  prefill leans on, for well under 1 MB of APK. Its quantized ARM kernels gate on dot
+  product, so per-tier dispatch is what lets a capable device reach them.
 - **Faster cold start.** `Application.onCreate()` was doing a surprising amount of work
   before the first frame: Firebase initialized its entire SDK from a ContentProvider on
   every launch, three separate encrypted stores each built a hardware-backed master key
@@ -42,9 +49,12 @@ All notable changes to Domain AI are documented here. This project adheres to
   badge, the "Active" profile label, the "Heavy for this device" chip — where WCAG
   AA requires 4.5:1, not the 3:1 that applies to icons. Darkened to `#8F5500`
   (5.50:1 worst case). Dark mode was already compliant.
-- **No CPU requirement beyond baseline arm64.** On-device inference still runs on every
-  arm64 device the app supports, the Snapdragon 835 and Exynos 8895 included. A raised
-  ISA baseline was tried during this cycle and reverted — see *Internal*.
+- **No CPU requirement beyond baseline arm64.** On-device inference runs on every
+  arm64 device the app supports, the Snapdragon 835 and Exynos 8895 included — now
+  by selecting a CPU build per device rather than by leaving the fast kernels out.
+- **Larger download.** Shipping a CPU backend per feature tier costs APK size. It
+  buys back speed on hardware that can use it while keeping every older device
+  working, which a single binary cannot do.
 
 ### Added
 - **Inference settings now adapt continuously, not once at startup.** Auto thread
@@ -98,7 +108,22 @@ All notable changes to Domain AI are documented here. This project adheres to
   five fixed integers it used to be constructed with, which is what makes re-planning
   possible at all. `effectiveContextTokens()` reports the window the loaded context
   actually has, so history budgeting can't drift from it between loads.
-- **ggml's dot-product kernels: two attempts, both reverted.** They are compile-time
+- **Per-tier CPU dispatch, and the two failed attempts before it.** Upstream selects
+  a CPU variant by globbing a directory for `libggml-cpu-*.so` and scoring each
+  candidate. That cannot work on Android: with `extractNativeLibs=false` the `.so`
+  files are stored uncompressed *inside* the APK, so the directory is empty and the
+  scan finds nothing — `no backends are loaded`. The libraries are named instead.
+  `CpuVariant` turns `AT_HWCAP`/`AT_HWCAP2` into an ordered candidate list ending in
+  the armv8.0 baseline, `System.loadLibrary` pulls each one in (the platform loader
+  being the part that can map a library out of an APK), and the JNI then loads by
+  bare soname against what is already resolved. ggml re-scores every candidate as it
+  loads, and upstream compiles the score function without architecture flags
+  precisely so it cannot fault on an older CPU, so a wrong tier costs a rejected
+  load rather than a crash. Two subtleties: `MODULE` libraries go to CMake's
+  *runtime* output directory, which is not where AGP collects native libraries from,
+  and `ggml_threadpool_*` lives inside the backend, so core pinning is recovered by
+  `dlsym` rather than lost.
+- **The earlier history, kept because the reasoning still matters.** They are compile-time
   gated on `__ARM_FEATURE_DOTPROD`, which only `-march` defines, so a cross-compile
   naming no target omits them. `GGML_CPU_ALL_VARIANTS` (build one CPU backend per
   feature tier, pick at runtime) is the correct fix and failed on device: it requires

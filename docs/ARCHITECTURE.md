@@ -117,74 +117,72 @@ llama/
 
 ggml's fast integer kernels are compile-time gated on ARM feature macros
 (`__ARM_FEATURE_DOTPROD`, `__ARM_FEATURE_MATMUL_INT8`, …) that the compiler only
-defines from `-march`. A cross-compile that names no target therefore silently
-produces a binary with *none* of them.
+defines from `-march`. A single binary therefore has to choose: name a high
+baseline and drop every older device, or name none and leave the kernels out for
+everybody. **The build takes neither option** — `GGML_CPU_ALL_VARIANTS` compiles
+the CPU backend once per feature tier and one is selected at runtime.
 
-**The build targets the NDK's baseline `armv8-a`, so it does not have them.** That
-is a known cost, taken deliberately. Two ways to get them were implemented and both
-were reverted — the reasons are the useful part of this section.
+The seven Android tiers ggml defines run from `android_armv8.0_1` (nothing beyond
+the arm64 guarantees) to `android_armv9.2_2` (dot product, fp16, i8mm, SVE, SVE2,
+SME). Every device gets the best kernels it can actually execute, and none are
+excluded.
 
-ggml builds as several `.so` files, but they are ordinary **shared** libraries wired
-together by `DT_NEEDED` — `libggml.so` names `libggml-cpu.so`, `libggml-vulkan.so`,
-`libggml-opencl.so` and `libggml-base.so` — so the dynamic linker loads the entire
-chain on `System.loadLibrary`, with no discovery step. That distinction,
-SHARED-with-`NEEDED` versus `MODULE`-discovered-at-runtime, is the whole reason this
-packaging works and the first alternative below does not.
+**The Android-specific problem, and why a first attempt at this failed.** Upstream
+selects a tier by globbing a directory for `libggml-cpu-*.so`, dlopening each
+candidate and asking it to score itself. That glob cannot work here. With
+`extractNativeLibs=false` (AGP's default since minSdk 23) the `.so` files are
+stored uncompressed *inside* the APK and mmap'd straight from it — note
+`base.apk!/lib/arm64-v8a/…` in logcat — so `nativeLibraryDir` contains no files and
+the scan matches nothing. The result is `no backends are loaded`, which is exactly
+how the earlier attempt died.
 
-> **Why not a raised baseline?** v1.11 set `GGML_CPU_ARM_ARCH` to
-> `armv8.2-a+dotprod+fp16`. It built, and the kernels were verified present in the
-> shipped APK (1048 `sdot`/`udot` instructions in `libggml-cpu.so`). It also stopped
-> on-device models working on this project's primary test device — a Xiaomi with 8 GB
-> of RAM — and both detection paths (`/proc/cpuinfo`'s `Features` line, then
-> `AT_HWCAP`) agreed that CPU has no `asimddp`.
->
-> **Dot product is optional in ARMv8.2; it is mandatory only from ARMv8.4.** RAM size
-> says nothing about CPU generation: budget phones routinely pair 8 GB with
-> Cortex-A73/A53 (ARMv8.0) or an A55 whose FEAT_DotProd was not implemented. For an
-> on-device LLM app whose natural audience is "cheap phone with lots of RAM", a fixed
-> `armv8.2` baseline excludes a large slice of the market. A build that is faster on
-> hardware nobody here owns is worth less than a build that runs.
+So the libraries are named rather than discovered:
 
-The other rejected route is the one that would actually have been correct, had it
-worked:
+1. `CpuVariant` reads `AT_HWCAP` and `AT_HWCAP2` and produces an ordered list of
+   candidate libraries, best first, **always ending with the armv8.0 baseline** so
+   the list can never come back empty. It owns the tier list — the cost the
+   bare-soname route was always going to carry — and its feature sets mirror
+   `ggml_add_cpu_backend_variant(android_…)` exactly. Pure, and unit-tested.
+2. `LLamaAndroid` calls `System.loadLibrary` on each candidate from the run-loop
+   thread. This is the step that matters: the platform loader is the piece that
+   knows how to map an uncompressed library out of an APK.
+3. The JNI then calls `ggml_backend_load` with the bare soname. Nothing is
+   searched for — the library is already resolved in this namespace — and ggml
+   re-checks each candidate's score, registering the first that passes.
 
-> **Why not `GGML_CPU_ALL_VARIANTS`?** ggml can compile the CPU backend once per
-> feature tier (it ships an Android list, `android_armv8.0_1` … `android_armv9.2_2`)
-> and pick the best at runtime — full dotprod/i8mm/SVE2/SME *and* no device dropped.
-> It was implemented, built green, and failed on hardware with
-> `llama_model_load_from_file_impl: no backends are loaded`.
->
-> Two blockers, both structural:
->
-> 1. `GGML_CPU_ALL_VARIANTS` requires `GGML_BACKEND_DL`, which makes each variant a
->    `MODULE` library that ggml's registry discovers with a **filesystem**
->    `directory_iterator` over a directory you hand it. On Android, AGP sets
->    `extractNativeLibs=false` by default (minSdk ≥ 23): the `.so` files are stored
->    uncompressed *inside* the APK and mmap'd from there by the linker — note
->    `base.apk!/lib/arm64-v8a/…` in logcat — so **`nativeLibraryDir` contains no
->    files** and the scan finds nothing. Forcing `useLegacyPackaging = true` fixes
->    the scan but extracts every library to `/data` as well, roughly doubling the
->    install footprint on top of a ~30 MB APK increase for the seven kernel copies.
-> 2. `ggml_threadpool_*` is `GGML_BACKEND_API`, i.e. it lives *in* the CPU backend,
->    so it cannot be linked once that backend is a runtime plugin — which costs the
->    fastest-core pinning from v1.05.
->
-> A viable third path, if this is revisited: skip the directory scan and call
-> `ggml_backend_load("libggml-cpu-<tier>.so")` with a **bare soname**, which the
-> Android linker resolves from the APK namespace, selecting the tier ourselves via
-> each candidate's exported `ggml_backend_score`. That keeps modern packaging and
-> needs no extraction, at the cost of owning the tier list.
+A second safety net sits under all of this: upstream deliberately compiles
+`cpu-feats.cpp` **without** architecture flags and with `-fno-lto`, precisely so a
+score function cannot execute an instruction the CPU lacks. A mistake in our tier
+list therefore costs a rejected load, not a SIGILL.
 
-Getting those kernels back without dropping a device needs runtime dispatch per CPU
-tier, not a raised compile-time baseline — the bare-soname path above is the open
-route.
+Two further details that are easy to get wrong:
 
-`CpuFeatures` survives from the raised-baseline attempt, now **diagnostic only**: it
-reads `AT_HWCAP` from `/proc/self/auxv` and logs the decoded feature list at startup.
-Nothing gates on it, because at baseline `armv8-a` there is nothing to gate. It stays
-because it is the input per-tier dispatch would need, and because it answers "does
-this phone have dotprod?" from a bug report rather than a guess. The parse is pure
-and unit-tested, and assumes capable when the vector is unreadable.
+- Under `GGML_BACKEND_DL` each backend becomes a CMake `MODULE` library, and ggml
+  sends MODULE output to `CMAKE_RUNTIME_OUTPUT_DIRECTORY`. AGP collects native
+  libraries from the *library* directory, so `CMakeLists.txt` points both at the
+  same place. Without that the variants build correctly and never reach the APK —
+  indistinguishable, at runtime, from failing to load.
+- `ggml_threadpool_*` is `GGML_BACKEND_API`, i.e. it lives *inside* the CPU
+  backend, so it cannot be linked when that backend is a runtime plugin. Rather
+  than lose the fastest-core pinning from v1.05 — a straight regression for
+  exactly the older hardware this change exists to keep supporting — the JNI
+  resolves `ggml_threadpool_new`/`_free` with `dlsym` from the backend it loaded.
+  `ggml_threadpool_params_default` is `GGML_API`, lives in ggml-base and is still
+  linked normally, so the defaults still come from upstream.
+
+`CpuFeatures` remains the measurement underneath: `AT_HWCAP` and `AT_HWCAP2` from
+`/proc/self/auxv`, parsed purely and unit-tested, with the decoded feature list and
+the selected tier both shown in Settings → System info.
+
+> **Historical note — the raised baseline.** v1.11 first tried setting
+> `GGML_CPU_ARM_ARCH` to `armv8.2-a+dotprod+fp16`. It built, and the kernels were
+> verified present in the shipped APK (1048 `sdot`/`udot` in `libggml-cpu.so`). It
+> also stopped on-device models working on this project's primary test device,
+> because **dot product is optional in ARMv8.2 and mandatory only from ARMv8.4**.
+> RAM size says nothing about CPU generation: budget phones routinely pair 8 GB
+> with a core that lacks it, and that is the natural audience for an on-device LLM.
+> The device's own `AT_HWCAP` later confirmed it has no `asimddp`. A fixed baseline
+> is the wrong tool; this section is what replaced it.
 
 ### The adaptive plan
 

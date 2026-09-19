@@ -29,14 +29,30 @@ class LLamaAndroid private constructor() {
 
     private val threadLocalState: ThreadLocal<State> = ThreadLocal.withInitial { State.Idle }
 
-    // App-private native library directory + device API level, used by the GPU
-    // build to load backend plugins selectively (Vulkan only on API >= 28). Must
-    // be set via [configure] before the first native call.
-    @Volatile
-    private var nativeLibDir: String? = null
+    /**
+     * Which backend libraries to load, best-first for the CPU.
+     *
+     * The CPU backend is built once per feature tier and only one is registered:
+     * the first that both loads and passes ggml's own score check. The list must
+     * end with a tier every arm64 device can run, or a device whose capabilities
+     * were misread ends up with no CPU backend at all.
+     */
+    data class Backends(
+        val cpuLibraries: List<String>,
+        val gpuLibraries: List<String>,
+    )
 
+    /**
+     * Supplies [Backends] when the run loop starts.
+     *
+     * A provider rather than a value for two reasons. Choosing the CPU tier means
+     * reading `/proc/self/auxv`, which should not happen on the main thread during
+     * launch; and invoking it from the run loop guarantees it has run before
+     * `backend_init`, with no ordering to get wrong. The :llama module cannot see
+     * the app's CpuVariant, so the app passes the answer in.
+     */
     @Volatile
-    private var deviceSdkInt: Int = 0
+    private var backendsProvider: (() -> Backends)? = null
 
     // Backend/device summary captured once the native library initializes. Empty
     // until the run-loop thread has started (i.e. after the first native call).
@@ -86,10 +102,12 @@ class LLamaAndroid private constructor() {
     /** Token-generation speed of the last generation, in tokens/sec. */
     fun lastGenTps(): Double = lastGenTps
 
-    /** Provide the values the native backend loader needs. Call before first use. */
-    fun configure(nativeLibraryDir: String?, sdkInt: Int) {
-        nativeLibDir = nativeLibraryDir
-        deviceSdkInt = sdkInt
+    /**
+     * Tell the loader which backend libraries to try. Call before first use; the
+     * provider is invoked once, on the run-loop thread, just before init.
+     */
+    fun configure(provider: () -> Backends) {
+        backendsProvider = provider
     }
 
     // Single worker thread that owns every native call.
@@ -98,7 +116,31 @@ class LLamaAndroid private constructor() {
             Log.d(tag, "Loading native library 'llama-android'")
             System.loadLibrary("llama-android")
             log_to_android() // route llama.cpp's own logs to logcat (load errors etc.)
-            backend_init(false, nativeLibDir, deviceSdkInt)
+
+            val backends = backendsProvider?.invoke()
+            if (backends == null) {
+                // configure() is called from ModelManager's constructor, so this
+                // means the run loop was reached by some path that bypassed it.
+                Log.e(tag, "No backend list configured; inference will not work")
+            }
+            val cpu = backends?.cpuLibraries.orEmpty()
+            val gpu = backends?.gpuLibraries.orEmpty()
+
+            // Pull each library into the process before asking ggml for it. The
+            // platform loader is the piece that knows how to map an uncompressed
+            // .so out of the APK — the case where a plain filesystem lookup finds
+            // nothing, which is what defeated the previous attempt at dispatch.
+            // Afterwards dlopen by soname resolves against what is already loaded.
+            for (library in cpu + gpu) {
+                runCatching { System.loadLibrary(library) }.onFailure {
+                    Log.w(tag, "Backend library '$library' unavailable: ${it.message}")
+                }
+            }
+            backend_init(
+                false,
+                cpu.map { "lib$it.so" }.toTypedArray(),
+                gpu.map { "lib$it.so" }.toTypedArray(),
+            )
             cachedBackendInfo = backend_info()
             cachedSystemInfo = system_info()
             Log.i(tag, "Backends: $cachedBackendInfo")
@@ -122,7 +164,7 @@ class LLamaAndroid private constructor() {
     private external fun new_context(model: Long, nCtx: Int, nThreads: Int, affinityCores: IntArray, nBatch: Int): Long
     private external fun context_size(context: Long): Int
     private external fun free_context(context: Long)
-    private external fun backend_init(numa: Boolean, libDir: String?, sdkInt: Int)
+    private external fun backend_init(numa: Boolean, cpuSonames: Array<String>, gpuSonames: Array<String>)
     private external fun backend_free()
     private external fun new_batch(nTokens: Int, embd: Int, nSeqMax: Int): Long
     private external fun free_batch(batch: Long)

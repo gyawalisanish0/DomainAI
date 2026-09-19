@@ -8,6 +8,7 @@
 // the Java_* symbols below (each '_' in a Kotlin name becomes '_1' when mangled).
 
 #include <android/log.h>
+#include <dlfcn.h>
 #include <jni.h>
 #include <algorithm>
 #include <cstring>
@@ -21,15 +22,26 @@
 // Threadpool pinned to the device's fastest cores (see new_context). The app keeps
 // a single context loaded at a time, so one global handle is enough; it is created
 // with the context and freed with it.
-#ifndef GGML_BACKEND_DL
-// Only available in a statically-linked build. ggml_threadpool_*
-// is GGML_BACKEND_API, i.e. it lives inside the CPU backend — so it can only be
-// linked when that backend is statically linked in. Under GGML_BACKEND_DL the CPU
-// backend is a runtime plugin and these symbols are unavailable at link time, so
-// pinning is compiled out and llama.cpp uses its own internal threadpool. The
-// thread *count* is unaffected either way (params.n_threads below).
 static ggml_threadpool *g_threadpool = nullptr;
-#endif
+
+// ggml_threadpool_* is GGML_BACKEND_API: it lives *inside* the CPU backend. With
+// the backend built as a runtime plugin (GGML_BACKEND_DL, which per-tier dispatch
+// requires) those symbols are not available at link time, so they are resolved
+// from the loaded backend instead.
+//
+// This is worth the small amount of machinery. Without it, enabling dispatch would
+// silently cost the fastest-core pinning added in v1.05 — a straight regression for
+// every device that gains nothing from dispatch, which is exactly the older
+// hardware this whole change exists to keep supporting.
+using threadpool_new_fn  = ggml_threadpool * (*)(ggml_threadpool_params *);
+using threadpool_free_fn = void (*)(ggml_threadpool *);
+static threadpool_new_fn  g_threadpool_new  = nullptr;
+static threadpool_free_fn g_threadpool_free = nullptr;
+
+/** True once the CPU backend's threadpool entry points have been resolved. */
+static bool threadpool_available() {
+    return g_threadpool_new != nullptr && g_threadpool_free != nullptr;
+}
 
 #define TAG "llama-android"
 #define LOGi(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
@@ -112,41 +124,92 @@ Java_sg_act_domain_llama_LLamaAndroid_last_1error(JNIEnv *env, jobject) {
     return env->NewStringUTF(g_last_error.c_str());
 }
 
+/**
+ * Read a Java String[] into a vector. Returns empty for null.
+ */
+static std::vector<std::string> to_string_vector(JNIEnv *env, jobjectArray arr) {
+    std::vector<std::string> out;
+    if (arr == nullptr) return out;
+    const jsize n = env->GetArrayLength(arr);
+    out.reserve(static_cast<size_t>(n));
+    for (jsize i = 0; i < n; i++) {
+        auto js = (jstring) env->GetObjectArrayElement(arr, i);
+        if (js == nullptr) continue;
+        const char *c = env->GetStringUTFChars(js, nullptr);
+        out.emplace_back(c);
+        env->ReleaseStringUTFChars(js, c);
+        env->DeleteLocalRef(js);
+    }
+    return out;
+}
+
 JNIEXPORT void JNICALL
 Java_sg_act_domain_llama_LLamaAndroid_backend_1init(
-        JNIEnv *env, jobject, jboolean, jstring lib_dir, jint sdk_int) {
-#ifdef GGML_BACKEND_DL
-    // Backends are separate dlopen-able plugins, so nothing is registered until we
-    // load them. This MUST be given the app's nativeLibraryDir: the registry's
-    // default search paths are the executable's directory and the process CWD,
-    // which on Android are /system/bin and /, so plain ggml_backend_load_all()
-    // finds nothing and the app ends up with no backend at all.
+        JNIEnv *env, jobject, jboolean, jobjectArray jcpu_sonames, jobjectArray jgpu_sonames) {
+    // With GGML_BACKEND_DL, nothing is registered until a backend is loaded, and
+    // upstream's loader finds them by globbing a directory. That cannot work here:
+    // Android's default packaging (extractNativeLibs=false) leaves the .so files
+    // uncompressed *inside* the APK, mmap'd straight from it, so nativeLibraryDir
+    // is empty and the glob matches nothing. A previous attempt at per-tier
+    // dispatch failed exactly this way, with "no backends are loaded".
     //
-    // load_all_from_path globs libggml-<name>-*.so, dlopens each, and asks every
-    // candidate to score itself against the running CPU — which is what selects
-    // one CPU variant out of the android_armv8.0_1..armv9.2_2 set built by
-    // GGML_CPU_ALL_VARIANTS. Loading a single hardcoded libggml-cpu.so would match
-    // none of those filenames and leave the device with no CPU backend.
+    // So the libraries are named explicitly instead. Kotlin has already pulled each
+    // one into the process with System.loadLibrary — the platform loader is the
+    // part that knows how to read an uncompressed library out of an APK — which
+    // leaves dlopen here with nothing to search for: the soname is already resolved
+    // in this namespace and it simply returns the loaded handle.
     //
-    // GPU plugins in the same directory are picked up by the same call. They link
-    // only Vulkan/OpenCL 1.0-era symbols (the Vulkan plugin resolves its one 1.1
-    // entry point dynamically), so every backend is safe to attempt down to the
-    // app's minSdk; a device lacking a driver just fails the dlopen, which DL mode
-    // handles gracefully, and the GpuGuard covers any deeper failure.
-    if (lib_dir != nullptr) {
-        const char *dir = env->GetStringUTFChars(lib_dir, nullptr);
-        const std::string d(dir);
-        env->ReleaseStringUTFChars(lib_dir, dir);
-        LOGi("Loading ggml backends from %s", d.c_str());
-        ggml_backend_load_all_from_path(d.c_str());
-    } else {
-        LOGe("No native library dir supplied; no ggml backend can be loaded");
+    // CPU candidates arrive best-first (see CpuVariant), so the first that
+    // registers is the most capable tier this CPU can run. ggml re-checks each
+    // candidate's score as it loads and refuses one the hardware cannot execute,
+    // so a mistake in our tier list costs a rejected load rather than a SIGILL.
+    const std::vector<std::string> cpu_sonames = to_string_vector(env, jcpu_sonames);
+    const std::vector<std::string> gpu_sonames = to_string_vector(env, jgpu_sonames);
+
+    std::string chosen_cpu;
+    for (const auto &soname : cpu_sonames) {
+        if (ggml_backend_load(soname.c_str()) != nullptr) {
+            chosen_cpu = soname;
+            LOGi("CPU backend: %s", soname.c_str());
+            break;
+        }
+        LOGi("CPU backend %s not usable here; trying the next tier", soname.c_str());
     }
-    (void) sdk_int;
-#else
-    (void) lib_dir;
-    (void) sdk_int;
-#endif
+    if (chosen_cpu.empty()) {
+        // Every tier refused, including the armv8.0 baseline that asks for nothing
+        // beyond the arm64 guarantees. Inference cannot run at all in this state,
+        // so say so loudly rather than failing later inside a model load.
+        LOGe("No CPU backend could be loaded (%zu candidates tried)", cpu_sonames.size());
+    } else {
+        // Recover fastest-core pinning: ggml_threadpool_* lives in the backend we
+        // just loaded. RTLD_NOLOAD because it is already in the process — this asks
+        // for a handle to it without loading anything new.
+        void *cpu_handle = dlopen(chosen_cpu.c_str(), RTLD_NOW | RTLD_NOLOAD);
+        if (cpu_handle != nullptr) {
+            g_threadpool_new =
+                (threadpool_new_fn) dlsym(cpu_handle, "ggml_threadpool_new");
+            g_threadpool_free =
+                (threadpool_free_fn) dlsym(cpu_handle, "ggml_threadpool_free");
+        }
+        if (!threadpool_available()) {
+            // Not fatal: llama.cpp falls back to its own internal threadpool. The
+            // thread *count* is unaffected; only the core affinity is lost.
+            LOGe("ggml_threadpool_* unavailable in %s; running without core pinning",
+                 chosen_cpu.c_str());
+        }
+    }
+
+    // GPU plugins are independent of the CPU tier, so every one is attempted. They
+    // link only Vulkan/OpenCL 1.0-era symbols (the Vulkan plugin resolves its one
+    // 1.1 entry point dynamically), so each is safe to try down to the app's
+    // minSdk; a device without a driver just fails to load, which DL mode handles,
+    // and the GpuGuard covers any deeper failure.
+    for (const auto &soname : gpu_sonames) {
+        if (ggml_backend_load(soname.c_str()) != nullptr) {
+            LOGi("GPU backend: %s", soname.c_str());
+        }
+    }
+
     llama_backend_init();
 
     // Explicitly enumerate the registered backend devices, so the log makes it
@@ -274,12 +337,15 @@ Java_sg_act_domain_llama_LLamaAndroid_new_1context(JNIEnv *env, jobject, jlong j
     // Pin the worker threads to the device's fastest cores so generation stays on the
     // powerful cores instead of drifting onto the little ones. Best-effort: Android's
     // cpuset/EAS scheduler may override the affinity request. Empty list = no pinning.
-#ifndef GGML_BACKEND_DL
-    if (g_threadpool != nullptr) { ggml_threadpool_free(g_threadpool); g_threadpool = nullptr; }
+    if (g_threadpool != nullptr && threadpool_available()) { g_threadpool_free(g_threadpool); g_threadpool = nullptr; }
     const jsize n_aff = jaffinity != nullptr ? env->GetArrayLength(jaffinity) : 0;
-    if (n_aff > 0) {
+    if (n_aff > 0 && threadpool_available()) {
         jint *cores = env->GetIntArrayElements(jaffinity, nullptr);
+        // ggml_threadpool_params_default is GGML_API, not GGML_BACKEND_API — it
+        // lives in ggml-base, which is still linked normally — so the defaults come
+        // from upstream rather than being restated here and drifting.
         ggml_threadpool_params tpp = ggml_threadpool_params_default(threads);
+        tpp.strict_cpu = false; // share the mask across workers; scheduler balances within it
         std::string mask_log;
         for (jsize i = 0; i < n_aff; i++) {
             const int cpu = cores[i];
@@ -289,19 +355,16 @@ Java_sg_act_domain_llama_LLamaAndroid_new_1context(JNIEnv *env, jobject, jlong j
             }
         }
         env->ReleaseIntArrayElements(jaffinity, cores, JNI_ABORT);
-        tpp.strict_cpu = false; // share the mask across workers; scheduler balances within it
-        g_threadpool = ggml_threadpool_new(&tpp);
+        g_threadpool = g_threadpool_new(&tpp);
         if (g_threadpool != nullptr) {
             llama_attach_threadpool(ctx, g_threadpool, g_threadpool);
             LOGi("Pinned %d worker threads to cores [%s] (best-effort)", threads, mask_log.c_str());
         } else {
-            LOGe("ggml_threadpool_new failed; running without core pinning");
+            LOGe("threadpool creation failed; running without core pinning");
         }
+    } else if (n_aff > 0) {
+        LOGe("Core pinning requested but the backend's threadpool API is unavailable");
     }
-#else
-    // Core pinning unavailable in DL mode (see the g_threadpool note above).
-    (void) jaffinity;
-#endif
 
     LOGi("Context ready: n_ctx=%d (trained=%d)", n_ctx, trained);
     return reinterpret_cast<jlong>(ctx);
@@ -315,13 +378,11 @@ Java_sg_act_domain_llama_LLamaAndroid_context_1size(JNIEnv *, jobject, jlong ctx
 JNIEXPORT void JNICALL
 Java_sg_act_domain_llama_LLamaAndroid_free_1context(JNIEnv *, jobject, jlong ctx) {
     auto *c = reinterpret_cast<llama_context *>(ctx);
-#ifndef GGML_BACKEND_DL
-    if (g_threadpool != nullptr) {
+    if (g_threadpool != nullptr && threadpool_available()) {
         if (c != nullptr) llama_detach_threadpool(c);
-        ggml_threadpool_free(g_threadpool);
+        g_threadpool_free(g_threadpool);
         g_threadpool = nullptr;
     }
-#endif
     llama_free(c);
 }
 

@@ -64,7 +64,6 @@ class AppContainer(app: DomainApp) {
         contextSettings = ContextSettings(app),
         threadSettings = ThreadSettings(app),
         gpuGuard = GpuGuard(app),
-        nativeLibDir = app.applicationInfo.nativeLibraryDir,
         sdkInt = android.os.Build.VERSION.SDK_INT,
     )
 

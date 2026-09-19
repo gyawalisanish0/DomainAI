@@ -4,6 +4,7 @@ import android.os.Build
 import sg.act.domain.BuildConfig
 import sg.act.domain.inference.Adaptive
 import sg.act.domain.inference.AdaptivePlan
+import sg.act.domain.inference.CpuVariant
 import sg.act.domain.inference.DeviceSnapshot
 import sg.act.domain.inference.ModelManager
 import sg.act.domain.privacy.CpuFeatures
@@ -34,6 +35,12 @@ data class SystemInfo(
     val cpuFeatures: String?,
     /** Whether the CPU advertises dot product. Null when the hwcap is unknown. */
     val hasDotprod: Boolean?,
+    /**
+     * The ggml CPU build this device's capabilities select. The engine ships one
+     * per feature tier and loads the best this hardware can run, so this is the
+     * single line that says whether dispatch did anything for you.
+     */
+    val cpuVariant: String,
     /** ggml's build-time feature line; empty until the engine has initialized. */
     val engineBuildFeatures: String,
     /** Registered ggml backends; empty until the engine has initialized. */
@@ -71,6 +78,7 @@ data class SystemInfo(
         appendLine("hwcap: ${hwcapHex ?: "unknown"}")
         appendLine("cpu features: ${cpuFeatures ?: "unknown"}")
         appendLine("dotprod: ${hasDotprod?.toString() ?: "unknown"}")
+        appendLine("cpu variant: $cpuVariant")
         appendLine("engine build: ${engineBuildFeatures.ifEmpty { "not initialized" }}")
         appendLine("backends: ${backends.ifEmpty { "not initialized" }}")
         appendLine("ram: ${availableRamMb} MB free of ${totalRamMb} MB")
@@ -106,7 +114,8 @@ data class SystemInfo(
             modelManager: ModelManager,
         ): SystemInfo {
             val snapshot = capabilities.snapshot()
-            val hwcap = CpuFeatures.deviceHwcap()
+            val caps = CpuFeatures.deviceHwcaps()
+            val hwcap = caps.hwcap
             return SystemInfo(
                 device = "${Build.MANUFACTURER} ${Build.MODEL}".trim(),
                 android = "${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})",
@@ -115,6 +124,7 @@ data class SystemInfo(
                 hwcapHex = hwcap?.let { "0x" + java.lang.Long.toHexString(it) },
                 cpuFeatures = hwcap?.let(CpuFeatures::decodeHwcap),
                 hasDotprod = hwcap?.let { (it and HWCAP_ASIMDDP) != 0L },
+                cpuVariant = CpuVariant.expectedFor(caps.hwcap, caps.hwcap2),
                 engineBuildFeatures = modelManager.engineBuildFeatures(),
                 backends = modelManager.backendInfo(),
                 totalRamMb = snapshot.totalRamMb,

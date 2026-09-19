@@ -74,13 +74,12 @@ have a fully private cloud backend — your model, your Space, your data.
 - a GGUF model (download in-app from Settings → On-device model, or import your own), or
 - a cloud provider configured in Settings → Cloud (self-hosted Space, OpenRouter, or a custom OpenAI-compatible endpoint).
 
-No CPU features beyond baseline arm64 are required: the inference engine is compiled
-for `armv8-a`, so it runs on every arm64 device Android 8.0 supports, including early
-parts like the Snapdragon 835. That costs some speed — ggml's dot-product matmul
-kernels are compile-time gated and stay out of the build — and the fix is per-CPU
-runtime dispatch rather than a raised baseline. See
-[ARCHITECTURE.md](docs/ARCHITECTURE.md#cpu-kernel-selection) for why the shortcut was
-tried and reverted.
+No CPU features beyond baseline arm64 are required. The inference engine ships its
+CPU backend built once per feature tier and selects one at runtime, so a modern chip
+gets the dot-product, fp16, i8mm and SVE kernels it can run while an early part like
+the Snapdragon 835 still works. See
+[ARCHITECTURE.md](docs/ARCHITECTURE.md#cpu-kernel-selection) for how the tier is
+chosen, and why the obvious shortcut — naming a higher baseline — is the wrong tool.
 
 ## Install
 

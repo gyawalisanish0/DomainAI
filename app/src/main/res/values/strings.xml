@@ -139,6 +139,7 @@
     <string name="system_row_cores">Cores</string>
     <string name="system_row_features">Features</string>
     <string name="system_row_dotprod">Dot product</string>
+    <string name="system_row_variant">CPU build in use</string>
     <string name="system_row_build">Built with</string>
     <string name="system_row_backends">Backends</string>
     <string name="system_row_ram">RAM</string>

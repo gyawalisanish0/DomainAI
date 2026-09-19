@@ -88,6 +88,35 @@ class CpuFeaturesTest {
         assertEquals(HWCAP_WITH_DP, CpuFeatures.hwcapFrom(image))
     }
 
+    // --- AT_HWCAP2: a separate word, read from the same vector ------------------
+
+    @Test
+    fun `reads AT_HWCAP2 independently of AT_HWCAP`() {
+        val image = auxv(AT_HWCAP to HWCAP_WITH_DP, AT_HWCAP2 to 0x2001L, AT_NULL to 0L)
+        assertEquals(HWCAP_WITH_DP, CpuFeatures.hwcapFrom(image))
+        assertEquals(0x2001L, CpuFeatures.hwcap2From(image))
+    }
+
+    @Test
+    fun `a vector with only AT_HWCAP yields null for the second word`() {
+        // The i8mm/SVE2/SME tiers depend on this: absent must read as unknown, and
+        // CpuVariant turns unknown into "feature missing" rather than guessing.
+        val image = auxv(AT_HWCAP to HWCAP_WITH_DP, AT_NULL to 0L)
+        assertNull(CpuFeatures.hwcap2From(image))
+    }
+
+    @Test
+    fun `AT_HWCAP2 after the terminator is not part of the vector either`() {
+        val image = auxv(AT_HWCAP to HWCAP_WITH_DP, AT_NULL to 0L, AT_HWCAP2 to 0xFFL)
+        assertNull(CpuFeatures.hwcap2From(image))
+    }
+
+    @Test
+    fun `both words come back null from a truncated vector`() {
+        assertNull(CpuFeatures.hwcapFrom(ByteArray(9)))
+        assertNull(CpuFeatures.hwcap2From(ByteArray(9)))
+    }
+
     @Test
     fun `decodes a plausible ARMv8_2 feature list`() {
         // fp, asimd, aes, pmull, sha1, sha2, crc32, atomics, fphp, asimdhp,

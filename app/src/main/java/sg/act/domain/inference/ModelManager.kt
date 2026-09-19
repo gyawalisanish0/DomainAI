@@ -1,6 +1,8 @@
 package sg.act.domain.inference
 
 import android.content.Context
+import android.os.Build
+import android.util.Log
 import sg.act.domain.R
 import sg.act.domain.data.local.ModelDescriptor
 import sg.act.domain.data.local.ModelSource
@@ -68,8 +70,7 @@ class ModelManager(
     private val threadSettings: ThreadSettings,
     /** Crash-safe GPU offload guard (forces full offload with CPU fallback). */
     private val gpuGuard: GpuGuard,
-    /** App-private native lib dir + device API level for selective backend loading. */
-    private val nativeLibDir: String? = null,
+    /** Device API level; gates which GPU plugins are worth attempting. */
     private val sdkInt: Int = 0,
     private val downloader: ModelDownloader = ModelDownloader(),
     private val llama: LLamaAndroid = LLamaAndroid.instance(),
@@ -131,16 +132,35 @@ class ModelManager(
     private var downloadJob: Job? = null
 
     init {
-        llama.configure(nativeLibDir, sdkInt)
-        scope.launch {
-            // Recorded, not enforced: the native build targets baseline armv8-a,
-            // so dotprod is no longer required to load a model. The value is
-            // still worth logging — it is the input a future per-tier runtime
-            // dispatch would need. Off the main thread: it reads /proc/self/auxv,
-            // and this runs during Application.onCreate().
-            CpuFeatures.deviceHasDotprod()
-            refreshInstalled()
+        // The provider runs on the native run loop, immediately before backend
+        // init — off the main thread (it reads /proc/self/auxv) and with no
+        // ordering to get wrong. See LLamaAndroid.configure.
+        llama.configure {
+            val caps = CpuFeatures.deviceHwcaps()
+            val cpu = CpuVariant.candidatesFor(caps.hwcap, caps.hwcap2)
+            Log.i(
+                TAG,
+                "CPU tiers for this device, best first: ${cpu.joinToString()}" +
+                    " (hwcap=${caps.hwcap?.let { java.lang.Long.toHexString(it) } ?: "?"}" +
+                    " hwcap2=${caps.hwcap2?.let { java.lang.Long.toHexString(it) } ?: "?"})",
+            )
+            LLamaAndroid.Backends(cpuLibraries = cpu, gpuLibraries = gpuLibraries())
         }
+        scope.launch { refreshInstalled() }
+    }
+
+    /**
+     * GPU plugins worth attempting on this device.
+     *
+     * Vulkan needs API 28: below that the loader itself is absent, so trying it
+     * only produces a confusing failure. OpenCL binds its ICD at runtime and is
+     * safe to attempt anywhere — a device without one simply fails to load, which
+     * the DL registry handles. Both are absent entirely from a non-GPU build, and
+     * a missing library is just a skipped candidate.
+     */
+    private fun gpuLibraries(): List<String> = buildList {
+        if (sdkInt >= Build.VERSION_CODES.P) add("ggml-vulkan")
+        add("ggml-opencl")
     }
 
     /** Provider handed to [LocalEngine]; null means the offline fallback answers. */
@@ -550,6 +570,8 @@ class ModelManager(
     }
 
     private companion object {
+        const val TAG = "ModelManager"
+
         // Descending GPU-offload attempts. 99 = "all layers" (llama clamps to the
         // model's count); each lower rung offloads fewer layers (less GPU memory),
         // and 0 is pure CPU. The first rung that loads wins, maximizing the layers

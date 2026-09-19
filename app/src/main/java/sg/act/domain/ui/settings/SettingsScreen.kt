@@ -321,6 +321,14 @@ private fun SystemInfoSection(
                 null -> stringResource(R.string.system_value_unknown)
             },
         )
+        // Which of the shipped per-tier CPU builds this device selected. On a CPU
+        // without dot product that is the armv8.0 baseline, and dispatch has
+        // changed nothing — which is worth being able to see rather than assume.
+        InfoRow(
+            label = stringResource(R.string.system_row_variant),
+            value = info.cpuVariant.removePrefix("ggml-cpu-"),
+            wide = true,
+        )
         // The full hwcap word, not just the bit the app cares about: a short,
         // plausible list distinguishes an older CPU from a parsing bug.
         InfoRow(

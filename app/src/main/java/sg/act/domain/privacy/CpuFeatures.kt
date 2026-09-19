@@ -36,6 +36,13 @@ object CpuFeatures {
     /** `AT_HWCAP` — the auxv entry carrying the ARM feature bitmask. */
     private const val AT_HWCAP = 16L
 
+    /**
+     * `AT_HWCAP2` — the second bitmask. A separate word with its own bit meanings,
+     * never an extension of the first: i8mm, SVE2 and SME live here, and bit 20
+     * means something entirely different from the bit 20 of [AT_HWCAP].
+     */
+    private const val AT_HWCAP2 = 26L
+
     /** `AT_NULL` — terminates the auxiliary vector. */
     private const val AT_NULL = 0L
 
@@ -74,14 +81,20 @@ object CpuFeatures {
      * unsigned long — 8 bytes little-endian on arm64 — ending at an [AT_NULL]
      * type.
      */
-    fun hwcapFrom(auxv: ByteArray): Long? {
+    fun hwcapFrom(auxv: ByteArray): Long? = auxvEntry(auxv, AT_HWCAP)
+
+    /** The same, for [AT_HWCAP2] — where i8mm, SVE2 and SME are reported. */
+    fun hwcap2From(auxv: ByteArray): Long? = auxvEntry(auxv, AT_HWCAP2)
+
+    /** Walk the vector for one entry type, stopping at the terminator. */
+    private fun auxvEntry(auxv: ByteArray, wanted: Long): Long? {
         val buffer = ByteBuffer.wrap(auxv).order(ByteOrder.LITTLE_ENDIAN)
         while (buffer.remaining() >= Long.SIZE_BYTES * 2) {
             val type = buffer.long
             val value = buffer.long
             when (type) {
-                AT_NULL -> return null // end of the vector; AT_HWCAP never appeared
-                AT_HWCAP -> return value
+                AT_NULL -> return null // end of the vector; the entry never appeared
+                wanted -> return value
             }
         }
         return null // truncated or absent
@@ -100,17 +113,25 @@ object CpuFeatures {
         return (hwcap and HWCAP_ASIMDDP) != 0L
     }
 
+    /** Both capability words, either of which may be null when unreadable. */
+    data class Hwcaps(val hwcap: Long?, val hwcap2: Long?)
+
     /**
-     * This device's `AT_HWCAP`, or null when it can't be determined — either the
-     * file was unreadable or the entry was absent. Callers that need a decision
-     * rather than a value should treat null as "unknown", never as "no features".
+     * This device's `AT_HWCAP` and `AT_HWCAP2`, from a single read of the
+     * auxiliary vector. Null for either means it could not be determined — the
+     * file was unreadable, or that entry was absent. Callers needing a decision
+     * should treat null as "unknown", never as "no features".
      */
-    fun deviceHwcap(): Long? = runCatching {
-        hwcapFrom(File("/proc/self/auxv").readBytes())
+    fun deviceHwcaps(): Hwcaps = runCatching {
+        val auxv = File("/proc/self/auxv").readBytes()
+        Hwcaps(hwcapFrom(auxv), hwcap2From(auxv))
     }.getOrElse {
         Log.w(TAG, "Could not read /proc/self/auxv", it)
-        null
+        Hwcaps(null, null)
     }
+
+    /** Just `AT_HWCAP`, for callers that don't care about the second word. */
+    fun deviceHwcap(): Long? = deviceHwcaps().hwcap
 
     /**
      * Read the live auxv; assumes capable if it can't be read. The resolved
