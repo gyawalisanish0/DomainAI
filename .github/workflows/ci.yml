@@ -113,3 +113,36 @@ jobs:
           name: app-debug
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+
+      # The debug APK is not a size measurement. Its native libraries keep their
+      # DWARF sections — on this project about half the APK — so reading download
+      # size off it overstates everything and misattributes it. Release is the
+      # artifact any size claim has to come from, and R8 only runs here, so this
+      # is also where a ProGuard rule that strips something Compose needs shows up.
+      - name: Assemble release (unsigned)
+        env:
+          ORACLE_KEYSTORE_FILE: ${{ steps.keystore.outputs.signed == 'true' && format('{0}/release.keystore', runner.temp) || '' }}
+          ORACLE_KEYSTORE_PASSWORD: ${{ secrets.ORACLE_KEYSTORE_PASSWORD }}
+          ORACLE_KEY_ALIAS: ${{ secrets.ORACLE_KEY_ALIAS }}
+          ORACLE_KEY_PASSWORD: ${{ secrets.ORACLE_KEY_PASSWORD }}
+        run: ./gradlew assembleRelease --stacktrace
+
+      # Fenced, because the step summary is rendered as Markdown and a
+      # fixed-width table is unreadable without it.
+      - name: APK size report
+        run: |
+          echo '### APK size' >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          for apk in app/build/outputs/apk/release/*.apk \
+                     app/build/outputs/apk/debug/app-debug.apk; do
+            [ -f "$apk" ] || continue
+            python3 tools/apk-size.py "$apk" | tee -a "$GITHUB_STEP_SUMMARY"
+          done
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload release APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-release
+          path: app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
