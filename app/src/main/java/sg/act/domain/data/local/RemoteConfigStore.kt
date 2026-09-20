@@ -10,19 +10,25 @@ import sg.act.domain.inference.RemoteEngine
  * The API key is encrypted at rest with a Keystore-backed master key and is only
  * read when the user has explicitly enabled cloud mode.
  */
-class RemoteConfigStore(context: Context) {
+class RemoteConfigStore(private val context: Context) {
 
-    private val masterKey = MasterKey.Builder(context)
-        .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-        .build()
-
-    private val prefs = EncryptedSharedPreferences.create(
-        context,
-        "oracle_remote_config",
-        masterKey,
-        EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-        EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
-    )
+    // Lazy, because building a hardware-backed master key and opening a Tink
+    // keyset is not free, and eager construction put that cost in
+    // Application.onCreate() — on the main thread, before the first frame.
+    // AppContainer warms these on a background coroutine at startup, so the work
+    // still happens early; it just no longer blocks the launch.
+    private val prefs by lazy {
+        val masterKey = MasterKey.Builder(context)
+            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+            .build()
+        EncryptedSharedPreferences.create(
+            context,
+            "oracle_remote_config",
+            masterKey,
+            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
+        )
+    }
 
     fun load(): RemoteEngine.Config? {
         val baseUrl = prefs.getString(KEY_BASE_URL, null) ?: return null

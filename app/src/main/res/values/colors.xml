@@ -11,7 +11,16 @@
 -->
 <resources>
     <color name="brand_local">#0B6E4F</color>
-    <color name="brand_cloud">#B26A00</color>
+    <!--
+      Darkened from #B26A00, which gave only 3.97:1 against this palette's page
+      background. All three brand colors are used for *small* text — the routing
+      badges, the "Active" profile label, the "Heavy for this device" chip — so
+      the applicable WCAG floor is 4.5:1, not the 3:1 that applies to icons and
+      component boundaries. #8F5500 clears it with margin on the page, on a
+      grouped surface, and on white (5.50:1 worst case). Verified by
+      tools/check-contrast.py; the dark palette was already at 7.35:1.
+    -->
+    <color name="brand_cloud">#8F5500</color>
     <color name="brand_blocked">#B3261E</color>
 
     <!-- Material3 color-scheme slots -->
@@ -24,6 +33,16 @@
     <color name="surface">#FFFFFF</color>
     <color name="on_surface">#101412</color>
     <color name="surface_variant">#E6EDE9</color>
+    <!--
+      M3 container ramp. Without these, Compose falls back to Material's default
+      purple-tinted neutrals, which clash visibly with this green-tinted palette
+      wherever a card or grouped surface is drawn.
+    -->
+    <color name="surface_container_lowest">#FFFFFF</color>
+    <color name="surface_container_low">#F1F5F2</color>
+    <color name="surface_container">#ECF1EE</color>
+    <color name="surface_container_high">#E6ECE8</color>
+    <color name="surface_container_highest">#E0E7E2</color>
     <color name="on_surface_variant">#42493F</color>
     <color name="outline">#72796F</color>
     <color name="error">#B3261E</color>

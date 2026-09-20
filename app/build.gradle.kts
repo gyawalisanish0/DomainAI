@@ -55,8 +55,8 @@ android {
         applicationId = "sg.act.domain"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
-        versionCode = 105
-        versionName = "1.05"
+        versionCode = 111
+        versionName = "1.11"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -147,6 +147,9 @@ dependencies {
 
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.androidx.security.crypto)
+    // Installs src/main/baseline-prof.txt into ART at install/first-run so the
+    // startup path ships AOT-compiled instead of being JIT'd on first launch.
+    implementation(libs.androidx.profileinstaller)
     implementation(libs.okhttp)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.coroutines.android)

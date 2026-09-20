@@ -20,19 +20,30 @@ data class ModelDescriptor(
  * the descriptor is small but stored in EncryptedSharedPreferences for
  * consistency with Domain AI's encrypt-everything-at-rest posture.
  */
-class ModelStore(context: Context) {
+class ModelStore(private val context: Context) {
 
-    private val masterKey = MasterKey.Builder(context)
-        .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-        .build()
+    // Lazy, because building a hardware-backed master key and opening a Tink
+    // keyset is not free, and eager construction put that cost in
+    // Application.onCreate() — on the main thread, before the first frame.
+    // AppContainer warms these on a background coroutine at startup, so the work
+    // still happens early; it just no longer blocks the launch.
+    private val prefs by lazy {
+        val masterKey = MasterKey.Builder(context)
+            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+            .build()
+        EncryptedSharedPreferences.create(
+            context,
+            "oracle_model",
+            masterKey,
+            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
+        )
+    }
 
-    private val prefs = EncryptedSharedPreferences.create(
-        context,
-        "oracle_model",
-        masterKey,
-        EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-        EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
-    )
+    /** Force the keystore/Tink work now, off the startup critical path. */
+    fun warmUp() {
+        prefs
+    }
 
     fun load(): ModelDescriptor? {
         val fileName = prefs.getString(KEY_FILE, null) ?: return null

@@ -1,12 +1,16 @@
 package sg.act.domain.inference
 
 import android.content.Context
+import android.os.Build
+import android.util.Log
 import sg.act.domain.R
 import sg.act.domain.data.local.ModelDescriptor
 import sg.act.domain.data.local.ModelSource
 import sg.act.domain.data.local.ModelStorage
 import sg.act.domain.data.local.ModelStore
+import sg.act.domain.data.model.GenerationStats
 import sg.act.domain.llama.LLamaAndroid
+import sg.act.domain.privacy.CpuFeatures
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -45,24 +49,31 @@ class ModelManager(
     private val modelStore: ModelStore,
     private val modelStorage: ModelStorage,
     private val scope: CoroutineScope,
-    /** Context length used for "Auto" — the device-recommended size. */
-    private val deviceRecommendedContext: Int,
-    /** Largest context the user may pick on this device (bounds the presets). */
-    private val deviceMaxContext: Int,
-    /** Thread count used for "Auto" — the device-adaptive recommendation. */
-    private val deviceAutoThreads: Int,
-    /** Largest thread count the user may pick on this device (bounds the presets). */
-    private val deviceMaxThreads: Int,
-    /** All core indices ordered fastest-first; the threadpool pins to the first N. */
-    private val coresBySpeed: IntArray,
+    /**
+     * The device's current inference plan — Auto thread/context values, the
+     * ceilings the user may pick within, and the prompt batch size.
+     *
+     * A **provider, not a value**, because free memory, thermal state and battery
+     * saver all change while the app is open. It is called afresh at each load (and
+     * whenever the UI shows its numbers), so a phone that has since cooled down or
+     * freed memory gets the larger plan without a restart.
+     */
+    private val plan: () -> AdaptivePlan,
+    /**
+     * All core indices ordered fastest-first; the threadpool pins to the first N.
+     * A provider, so reading the CPU topology out of `/sys` stays off the launch
+     * path — it is only needed when a model actually loads.
+     */
+    private val coresBySpeed: () -> IntArray,
     /** User's context-length choice (0 = Auto). Read at each load. */
     private val contextSettings: ContextSettings,
     /** User's thread-count choice (0 = Auto). Read at each load. */
     private val threadSettings: ThreadSettings,
     /** Crash-safe GPU offload guard (forces full offload with CPU fallback). */
     private val gpuGuard: GpuGuard,
-    /** App-private native lib dir + device API level for selective backend loading. */
-    private val nativeLibDir: String? = null,
+    /** User overrides for the engine's automatic decisions. Read at each load. */
+    private val engineSettings: EngineSettings,
+    /** Device API level; gates which GPU plugins are worth attempting. */
     private val sdkInt: Int = 0,
     private val downloader: ModelDownloader = ModelDownloader(),
     private val llama: LLamaAndroid = LLamaAndroid.instance(),
@@ -112,12 +123,47 @@ class ModelManager(
     @Volatile
     private var backend: LlamaCppBackend? = null
 
+    /**
+     * The context length the native context was actually opened with, or null when
+     * nothing is loaded. Held because the plan is re-sampled between loads and
+     * history budgeting must follow the window that exists, not the next one.
+     */
+    @Volatile
+    private var loadedContextTokens: Int? = null
+
     @Volatile
     private var downloadJob: Job? = null
 
     init {
-        llama.configure(nativeLibDir, sdkInt)
+        // The provider runs on the native run loop, immediately before backend
+        // init — off the main thread (it reads /proc/self/auxv) and with no
+        // ordering to get wrong. See LLamaAndroid.configure.
+        llama.configure {
+            val caps = CpuFeatures.deviceHwcaps()
+            val cpu = CpuVariant.candidatesFor(caps.hwcap, caps.hwcap2)
+            Log.i(
+                TAG,
+                "CPU tiers for this device, best first: ${cpu.joinToString()}" +
+                    " (hwcap=${caps.hwcap?.let { java.lang.Long.toHexString(it) } ?: "?"}" +
+                    " hwcap2=${caps.hwcap2?.let { java.lang.Long.toHexString(it) } ?: "?"})",
+            )
+            LLamaAndroid.Backends(cpuLibraries = cpu, gpuLibraries = gpuLibraries())
+        }
         scope.launch { refreshInstalled() }
+    }
+
+    /**
+     * GPU plugins worth attempting on this device.
+     *
+     * Vulkan needs API 28: below that the loader itself is absent, so trying it
+     * only produces a confusing failure. OpenCL binds its ICD at runtime and is
+     * safe to attempt anywhere — a device without one simply fails to load, which
+     * the DL registry handles. Both are absent entirely from a non-GPU build, and
+     * a missing library is just a skipped candidate.
+     */
+    private fun gpuLibraries(): List<String> = buildList {
+        if (sdkInt >= Build.VERSION_CODES.P) add("ggml-vulkan")
+        add("ggml-opencl")
     }
 
     /** Provider handed to [LocalEngine]; null means the offline fallback answers. */
@@ -195,6 +241,7 @@ class ModelManager(
         if (modelStore.load()?.fileName == fileName) {
             llama.unload()
             backend = null
+            loadedContextTokens = null
             modelStore.clear()
             _state.value = State.NotLoaded
         }
@@ -327,13 +374,23 @@ class ModelManager(
     /** The user's chosen context length (0 = Auto). */
     fun contextTokens(): Int = contextSettings.chosenTokens()
 
-    /** Selectable context-length presets allowed on this device. */
-    fun contextOptions(): List<Int> = CONTEXT_PRESETS.filter { it <= deviceMaxContext }
+    /** Selectable context-length presets allowed on this device, right now. */
+    fun contextOptions(): List<Int> = CONTEXT_PRESETS.filter { it <= plan().maxContextTokens }
 
-    /** The context length that will actually be requested: chosen, or device Auto. */
-    fun effectiveContextTokens(): Int {
+    /**
+     * The context length in force: what the loaded model was actually opened with,
+     * or — with nothing loaded — what the next load would request.
+     *
+     * Preferring the loaded value matters because [ChatRepository][sg.act.domain.data.repository.ChatRepository]
+     * budgets history against this. Re-planning between loads must not leave the
+     * budget quoting a window the native context doesn't have.
+     */
+    fun effectiveContextTokens(): Int = loadedContextTokens ?: plannedContextTokens(plan())
+
+    /** Context length the next load would request, given [p]. */
+    private fun plannedContextTokens(p: AdaptivePlan): Int {
         val chosen = contextSettings.chosenTokens()
-        return if (chosen > 0) chosen.coerceAtMost(deviceMaxContext) else deviceRecommendedContext
+        return if (chosen > 0) chosen.coerceAtMost(p.maxContextTokens) else p.autoContextTokens
     }
 
     /** Set the context length (0 = Auto) and reload the active model so it applies. */
@@ -346,13 +403,62 @@ class ModelManager(
     fun threadCount(): Int = threadSettings.chosenThreads()
 
     /** Selectable thread-count presets allowed on this device (2..max). */
-    fun threadOptions(): List<Int> = (2..deviceMaxThreads).toList()
+    fun threadOptions(): List<Int> = (Adaptive.MIN_THREADS..plan().maxThreads).toList()
 
-    /** The thread count that will actually be used: chosen, or device Auto. */
-    fun effectiveThreads(): Int {
+    /** The thread count that will actually be used: chosen, or adaptive Auto. */
+    fun effectiveThreads(): Int = plannedThreads(plan())
+
+    /** Thread count the next load would use, given [p]. */
+    private fun plannedThreads(p: AdaptivePlan): Int {
         val chosen = threadSettings.chosenThreads()
-        return if (chosen > 0) chosen.coerceIn(2, deviceMaxThreads) else deviceAutoThreads
+        return if (chosen > 0) chosen.coerceIn(Adaptive.MIN_THREADS, p.maxThreads) else p.autoThreads
     }
+
+    /**
+     * The device's plan as of now, for the Settings system-info panel. Sampled on
+     * call, so it reflects the phone's current thermal and memory state.
+     */
+    fun currentPlan(): AdaptivePlan = plan()
+
+    /** Whether a follow-up turn reuses the cached prompt prefix. */
+    fun reusePromptCache(): Boolean = engineSettings.reusePromptCache()
+
+    /** Toggle prompt-cache reuse. Takes effect immediately, no reload needed. */
+    fun setReusePromptCache(enabled: Boolean) {
+        engineSettings.setReusePromptCache(enabled)
+        scope.launch { llama.setReusePromptCache(enabled) }
+    }
+
+    /** Whether each worker is pinned to one specific core. */
+    fun strictAffinity(): Boolean = engineSettings.strictAffinity()
+
+    /** Set strict pinning and reload, since the threadpool is built at load. */
+    fun setStrictAffinity(enabled: Boolean) {
+        engineSettings.setStrictAffinity(enabled)
+        scope.launch { loadActiveModelIfPresent() }
+    }
+
+    /** Whether inference workers run above normal scheduling priority. */
+    fun highPriority(): Boolean = engineSettings.highPriority()
+
+    /** Set worker priority and reload, since the threadpool is built at load. */
+    fun setHighPriority(enabled: Boolean) {
+        engineSettings.setHighPriority(enabled)
+        scope.launch { loadActiveModelIfPresent() }
+    }
+
+    /** ggml's registered backends, e.g. `"CPU [CPU]; Vulkan0 [GPU] Adreno 610"`. */
+    fun backendInfo(): String = llama.backendInfo()
+
+    /** ggml's build-time CPU feature line (what the shipped engine can emit). */
+    fun engineBuildFeatures(): String = llama.systemInfo()
+
+    /**
+     * Make sure the native engine has initialized, so [backendInfo] and
+     * [engineBuildFeatures] have something to report even when no model has been
+     * loaded this session.
+     */
+    suspend fun ensureEngineInitialized() = llama.ensureInitialized()
 
     /** Set the thread count (0 = Auto) and reload the active model so it applies. */
     fun setThreadCount(count: Int) {
@@ -361,11 +467,28 @@ class ModelManager(
     }
 
     /**
+     * Timing of the most recent on-device generation, or null if none has run or
+     * it produced no tokens. Read once a reply finishes, to record on it.
+     */
+    fun lastGenerationStats(): GenerationStats? {
+        val tokens = llama.lastGenTokens()
+        if (tokens <= 0) return null
+        return GenerationStats(
+            prefillMs = llama.lastPrefillMs(),
+            tokens = tokens,
+            tokensPerSecond = llama.lastGenTps(),
+        )
+    }
+
+    /**
      * Run a fixed prompt through the loaded model and return its timing, so GPU vs
      * CPU can be compared on identical input. Returns null if no model is loaded.
      */
     suspend fun benchmark(): BenchmarkResult? {
         val b = backend ?: return null
+        // Start cold. Otherwise a second run of this same fixed prompt reuses the
+        // first one's KV cache and reports a prefill time no real question sees.
+        llama.clearPromptCache()
         b.generate(BENCHMARK_PROMPT, emptyList()).collect { /* consume to completion */ }
         val result = BenchmarkResult(
             prefillMs = llama.lastPrefillMs(),
@@ -383,6 +506,7 @@ class ModelManager(
     suspend fun unload() = mutex.withLock {
         llama.unload()
         backend = null
+        loadedContextTokens = null
         modelStore.clear()
         _state.value = State.NotLoaded
         refreshInstalled()
@@ -451,17 +575,35 @@ class ModelManager(
     ): Throwable? = try {
         llama.unload() // free any prior/partial context first (no-op if none)
         backend = null
+        loadedContextTokens = null
         gpuGuard.beginAttempt(gpuLayers)
-        val threads = effectiveThreads()
+        // One plan sample for the whole attempt: threads, context and batch have to
+        // agree with each other, which they wouldn't if each re-read a phone whose
+        // free memory moved in between.
+        val p = plan()
+        val threads = plannedThreads(p)
+        val contextTokens = plannedContextTokens(p)
         // Pin to the fastest `threads` cores so generation stays on the big cluster;
         // empty when /sys was unreadable, in which case the native side skips pinning.
-        val affinity = if (coresBySpeed.isNotEmpty()) {
-            coresBySpeed.take(threads).toIntArray()
+        val ordered = coresBySpeed()
+        val affinity = if (ordered.isNotEmpty()) {
+            ordered.take(threads).toIntArray()
         } else {
             IntArray(0)
         }
-        llama.load(path, effectiveContextTokens(), gpuLayers, threads, affinity)
+        // A user batch override beats the plan; 0 means follow it.
+        val batch = engineSettings.batchSize().takeIf { it > 0 } ?: p.batchSize
+        val strict = engineSettings.strictAffinity()
+        val highPriority = engineSettings.highPriority()
+        sg.act.domain.core.CrashReporting.log(
+            "Adaptive plan: threads=$threads ctx=$contextTokens batch=$batch" +
+                " strict=$strict prio=${if (highPriority) "high" else "normal"}" +
+                " constraints=${p.constraints.joinToString(",").ifEmpty { "none" }}",
+        )
+        llama.setReusePromptCache(engineSettings.reusePromptCache())
+        llama.load(path, contextTokens, gpuLayers, threads, affinity, batch, strict, highPriority)
         gpuGuard.endAttempt()
+        loadedContextTokens = contextTokens
         backend = LlamaCppBackend(displayName, llama)
         val hasGpuDevice = llama.backendInfo().contains("[GPU]")
         val detail = when {
@@ -476,10 +618,13 @@ class ModelManager(
     } catch (e: Exception) {
         gpuGuard.endAttempt() // threw (didn't abort the process) — not a driver crash
         backend = null
+        loadedContextTokens = null
         e
     }
 
     private companion object {
+        const val TAG = "ModelManager"
+
         // Descending GPU-offload attempts. 99 = "all layers" (llama clamps to the
         // model's count); each lower rung offloads fewer layers (less GPU memory),
         // and 0 is pure CPU. The first rung that loads wins, maximizing the layers

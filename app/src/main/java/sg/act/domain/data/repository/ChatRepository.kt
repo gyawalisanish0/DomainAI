@@ -6,9 +6,12 @@ import sg.act.domain.data.local.ConversationStore
 import sg.act.domain.data.local.RemoteConfigStore
 import sg.act.domain.data.local.SelectionStore
 import sg.act.domain.data.model.Conversation
+import sg.act.domain.data.model.GenerationStats
 import sg.act.domain.data.model.Message
 import sg.act.domain.data.model.Role
 import sg.act.domain.data.model.Route
+import sg.act.domain.data.model.rewindToLastUserTurn
+import sg.act.domain.data.model.rewindToUserMessage
 import sg.act.domain.inference.InferenceEngine
 import sg.act.domain.inference.LocalEngine
 import sg.act.domain.inference.PrivacyRouter
@@ -19,13 +22,17 @@ import sg.act.domain.privacy.PrivacySettings
 import sg.act.domain.privacy.PrivacyState
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
@@ -44,6 +51,8 @@ class ChatRepository(
     private val contextTokens: () -> Int = { 4096 },
     /** Whether a real on-device model is loaded (summarization needs one). */
     private val localModelLoaded: () -> Boolean = { false },
+    /** Timing of the generation that just finished, recorded on on-device replies. */
+    private val lastGenerationStats: () -> GenerationStats? = { null },
 ) {
 
     private val router = PrivacyRouter(
@@ -137,25 +146,30 @@ class ChatRepository(
         if (currentActive() == null) newConversation()
         val active = currentActive() ?: return
 
-        // Fit the conversation to the context window (summarize locally / truncate).
-        val history = prepareHistory(active)
-
+        // Show the user bubble immediately so the screen isn't blank while history
+        // prep (and optional summarization) runs in the background.
         val userMessage = Message(role = Role.USER, text = prompt)
-        updateActive { it.addMessage(userMessage) }
+        updateActive { it.addMessage(userMessage).retitleIfNeeded(prompt) }
+
+        // Fit the conversation to the context window (summarize locally / truncate).
+        // Uses `active` — the pre-user-message snapshot — so it's safe to add the
+        // user bubble to the UI first.
+        val history = prepareHistory(active)
 
         val privacy = privacyState.first()
         val outcome = router.answer(prompt, history, privacy, useCloudForThisTurn)
 
-        // Seed an empty reply carrying the route/preview; tokens fill it in.
+        // Seed an empty reply carrying the route/preview; the typing indicator inside
+        // AssistantContent shows while the first token is on its way.
         updateActive {
             it.addMessage(
                 Message(
-                    role = Role.ORACLE,
+                    role = Role.DOMAIN,
                     text = "",
                     route = outcome.route,
                     sentPayloadPreview = outcome.sentPayloadPreview,
                 ),
-            ).retitleIfNeeded(prompt)
+            )
         }
 
         val builder = StringBuilder()
@@ -172,8 +186,12 @@ class ChatRepository(
             )
         }
         try {
-            outcome.tokens.collect { delta ->
-                builder.append(delta)
+            val tokenStream = when (outcome.route) {
+                Route.CLOUD -> outcome.tokens.withInitialBuffer()
+                else        -> outcome.tokens.smoothStream()
+            }
+            tokenStream.collect { fragment ->
+                builder.append(fragment)
                 updateActive { it.updateLastText(stripLeadingNameLabel(builder.toString())) }
             }
         } catch (e: CancellationException) {
@@ -182,6 +200,7 @@ class ChatRepository(
             finalizeReply(
                 stripLeadingNameLabel(builder.toString()),
                 outcome.note ?: context.getString(R.string.reply_stopped),
+                statsFor(outcome.route),
             )
             throw e
         } catch (e: Exception) {
@@ -191,12 +210,50 @@ class ChatRepository(
             if (foreground) sg.act.domain.core.ForegroundWork.end(context)
         }
 
-        finalizeReply(stripLeadingNameLabel(builder.toString()), outcome.note ?: errorNote)
+        finalizeReply(
+            stripLeadingNameLabel(builder.toString()),
+            outcome.note ?: errorNote,
+            statsFor(outcome.route),
+        )
+    }
+
+    /**
+     * Timing for the reply that just finished, for on-device turns only. A cloud
+     * reply's speed is the network's, not this device's, and the engine's counters
+     * would be left over from whenever a local model last ran.
+     */
+    private fun statsFor(route: Route): GenerationStats? =
+        if (route == Route.LOCAL) lastGenerationStats() else null
+
+    /**
+     * Re-answer the most recent question: the reply it produced is discarded and
+     * the same prompt goes back through [send], so the new answer is routed,
+     * redacted and budgeted under the settings in force right now (a different
+     * model, say, or a context length that has since changed). A no-op in a chat
+     * with no question to replay.
+     */
+    suspend fun regenerate(useCloudForThisTurn: Boolean) {
+        val rewind = currentActive()?.rewindToLastUserTurn() ?: return
+        updateActive { rewind.conversation }
+        send(rewind.prompt, useCloudForThisTurn)
+    }
+
+    /**
+     * Reword an earlier question and take the conversation from there: that turn
+     * and every turn after it is discarded, then [newText] is sent in its place.
+     * A no-op when the message is gone or the replacement text is blank.
+     */
+    suspend fun editAndResend(messageId: String, newText: String, useCloudForThisTurn: Boolean) {
+        val prompt = newText.trim()
+        if (prompt.isEmpty()) return
+        val rewind = currentActive()?.rewindToUserMessage(messageId) ?: return
+        updateActive { rewind.conversation }
+        send(prompt, useCloudForThisTurn)
     }
 
     /**
      * Strip a leading speaker-label the model sometimes emits despite the system
-     * prompt (e.g. "Domain AI:" / "Oracle:" at the very start of a reply).
+     * prompt (e.g. "Domain AI:" / "Domain:" at the very start of a reply).
      */
     private fun stripLeadingNameLabel(text: String): String =
         text.replaceFirst(
@@ -205,14 +262,14 @@ class ChatRepository(
         )
 
     /** Write the reply's final text (body plus any note) and persist, uncancellably. */
-    private suspend fun finalizeReply(body: String, note: String?) {
+    private suspend fun finalizeReply(body: String, note: String?, stats: GenerationStats?) {
         val finalText = when {
             note == null -> body
             body.isBlank() -> "_${note}_"
             else -> "$body\n\n_${note}_"
         }
         withContext(NonCancellable) {
-            updateActive { it.updateLastText(finalText) }
+            updateActive { it.updateLastText(finalText).updateLastStats(stats) }
             persist()
         }
     }
@@ -311,7 +368,7 @@ class ChatRepository(
 
     private fun summaryPrefix(summary: String?): List<Message> =
         if (summary.isNullOrBlank()) emptyList()
-        else listOf(Message(role = Role.ORACLE, text = "[Summary of earlier conversation]\n$summary"))
+        else listOf(Message(role = Role.DOMAIN, text = "[Summary of earlier conversation]\n$summary"))
 
     private suspend fun summarizeTurns(previous: String?, turns: List<Message>): String {
         val transcript = turns.joinToString("\n") {
@@ -347,6 +404,78 @@ class ChatRepository(
         conversationStore.save(_conversations.value.filter { it.messages.isNotEmpty() })
     }
 
+    /**
+     * Smooth typewriter rendering for any token stream:
+     * - When the char queue is empty (stream is trickling — local / slow server):
+     *   no added delay; chars appear as fast as they arrive.
+     * - When the queue has buffered chars (burst from cloud API): drain at
+     *   [burstMs] per char so bursts render smoothly rather than all at once.
+     * - After the upstream flow completes: drain any remaining buffer at
+     *   [drainMs] per char so the last paragraph isn't held up.
+     */
+    private fun Flow<String>.smoothStream(
+        burstMs: Long = 18L,
+        drainMs: Long = 6L,
+    ): Flow<String> = channelFlow {
+        val queue = Channel<Char>(Channel.UNLIMITED)
+        var done = false
+        launch {
+            try {
+                collect { token -> token.forEach { queue.send(it) } }
+            } finally {
+                done = true
+                queue.close()
+            }
+        }
+        for (ch in queue) {
+            send(ch.toString())
+            delay(
+                when {
+                    done -> drainMs       // fast drain after stream ends
+                    !queue.isEmpty -> burstMs  // smooth a buffered burst
+                    else -> 0L            // trickling stream: no added delay
+                },
+            )
+        }
+    }
+
+    /**
+     * Buffer all incoming tokens for [initialDelayMs] before emitting anything,
+     * then drain with smooth typewriter rendering.  Used for CLOUD routes so the
+     * reply bubble shows its typing indicator for a natural "thinking" period
+     * instead of text popping in the moment the first token arrives.
+     */
+    private fun Flow<String>.withInitialBuffer(
+        initialDelayMs: Long = 7_000L,
+        burstMs: Long = 18L,
+        drainMs: Long = 6L,
+    ): Flow<String> = channelFlow {
+        val queue = Channel<Char>(Channel.UNLIMITED)
+        var done = false
+        launch {
+            try {
+                collect { token -> token.forEach { queue.send(it) } }
+            } finally {
+                done = true
+                queue.close()
+            }
+        }
+        // Hold back rendering — the empty reply bubble shows its internal typing
+        // indicator during this window (text is still "", indicator is visible).
+        delay(initialDelayMs)
+        // Drain buffer + continuing stream with smooth rendering.
+        for (ch in queue) {
+            send(ch.toString())
+            delay(
+                when {
+                    done -> drainMs
+                    !queue.isEmpty -> burstMs
+                    else -> 0L
+                },
+            )
+        }
+    }
+
     private fun Conversation.addMessage(message: Message) = copy(
         messages = messages + message,
         updatedAt = System.currentTimeMillis(),
@@ -360,8 +489,20 @@ class ChatRepository(
         return copy(messages = updated, updatedAt = System.currentTimeMillis())
     }
 
+    /**
+     * Record how fast the most recent reply ran. A null [stats] leaves the message
+     * alone: a cloud turn has nothing to record, and a local turn that produced no
+     * tokens (an immediate error) would otherwise be labelled "0 tok/s".
+     */
+    private fun Conversation.updateLastStats(stats: GenerationStats?): Conversation {
+        if (stats == null || messages.isEmpty()) return this
+        val updated = messages.toMutableList()
+        updated[updated.lastIndex] = updated.last().copy(stats = stats)
+        return copy(messages = updated)
+    }
+
     private fun Conversation.retitleIfNeeded(firstPrompt: String) =
-        if (title == "New chat" && firstPrompt.isNotBlank()) {
+        if (title == Conversation.DEFAULT_TITLE && firstPrompt.isNotBlank()) {
             copy(title = firstPrompt.take(40))
         } else {
             this

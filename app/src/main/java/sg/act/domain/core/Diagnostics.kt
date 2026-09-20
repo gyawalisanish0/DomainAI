@@ -14,8 +14,9 @@ import java.util.Locale
  * Debug-only diagnostics. Captures this app's *own* logcat — which an app may
  * always read without any permission — and hands it to the share sheet as a .txt.
  * Includes the native llama.cpp loader output that we route through
- * __android_log_print, so a model-load failure can be shared from the phone with
- * no PC, ADB or root. Only ever invoked from the debug build (see SettingsScreen).
+ * __android_log_print, so a model-load failure can be reported straight from the
+ * device — no ADB, host machine or root needed. Only ever invoked from the debug
+ * build (see SettingsScreen).
  */
 object Diagnostics {
 

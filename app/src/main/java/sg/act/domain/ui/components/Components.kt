@@ -6,12 +6,15 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -23,9 +26,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material.icons.filled.Smartphone
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -45,7 +51,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.res.dimensionResource
 import androidx.compose.ui.res.integerResource
@@ -53,7 +61,9 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.style.TextOverflow
 import sg.act.domain.R
+import sg.act.domain.data.model.GenerationStats
 import sg.act.domain.data.model.Message
 import sg.act.domain.data.model.Role
 import sg.act.domain.data.model.Route
@@ -109,11 +119,27 @@ fun RoutingBadge(route: Route, modifier: Modifier = Modifier) {
     }
 }
 
+/**
+ * One chat message, with the actions that apply to it. [onRegenerate] (assistant
+ * replies) and [onEdit] (user messages) are null when the action doesn't apply
+ * here — an older reply, or a generation already in flight — and the affordance
+ * is then left off entirely rather than shown disabled.
+ *
+ * Long-pressing the bubble opens the same actions as a menu. That is the gesture
+ * people already try, and it reaches actions the icon row deliberately leaves
+ * out — copying a message mid-generation, or pulling one paragraph out of a long
+ * answer. Text selection is one of those menu items rather than always-on,
+ * because a bubble that is permanently a selection target can never respond to a
+ * long press at all.
+ */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun MessageBubble(
     message: Message,
     modifier: Modifier = Modifier,
     streaming: Boolean = false,
+    onRegenerate: (() -> Unit)? = null,
+    onEdit: (() -> Unit)? = null,
 ) {
     val isUser = message.role == Role.USER
     val bubbleColor =
@@ -126,58 +152,121 @@ fun MessageBubble(
     val maxWidth = dimensionResource(R.dimen.bubble_max_width)
 
     val clipboard = LocalClipboardManager.current
+    val haptics = LocalHapticFeedback.current
+    val menuLabel = stringResource(R.string.cd_message_menu)
+    var menuOpen by remember { mutableStateOf(false) }
+    var selecting by remember { mutableStateOf(false) }
+    // A streaming reply is rewritten on every token, which would tear a selection
+    // out from under the handles.
+    val canSelect = !streaming && message.text.isNotBlank()
+    val copyMessage = { clipboard.setText(AnnotatedString(message.text)) }
 
     Column(
         modifier = modifier.fillMaxWidth(),
         horizontalAlignment = if (isUser) Alignment.End else Alignment.Start,
     ) {
-        Surface(
-            color = bubbleColor,
-            shape = RoundedCornerShape(
-                topStart = corner,
-                topEnd = corner,
-                bottomStart = if (isUser) corner else tail,
-                bottomEnd = if (isUser) tail else corner,
-            ),
-            modifier = Modifier.widthIn(max = maxWidth),
-        ) {
-            val contentPadding = Modifier.padding(
-                horizontal = dimensionResource(R.dimen.bubble_pad_h),
-                vertical = dimensionResource(R.dimen.bubble_pad_v),
-            )
-            if (isUser) {
-                Text(
-                    text = message.text,
-                    color = textColor,
-                    style = MaterialTheme.typography.bodyLarge,
-                    modifier = contentPadding,
-                )
-            } else {
-                AssistantContent(
-                    text = message.text,
-                    streaming = streaming,
-                    textColor = textColor,
-                    modifier = contentPadding,
-                )
-            }
-        }
-        if (!isUser) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(dimensionResource(R.dimen.space_s)),
-                modifier = Modifier.padding(top = dimensionResource(R.dimen.space_xs)),
+        Box {
+            Surface(
+                color = bubbleColor,
+                shape = RoundedCornerShape(
+                    topStart = corner,
+                    topEnd = corner,
+                    bottomStart = if (isUser) corner else tail,
+                    bottomEnd = if (isUser) tail else corner,
+                ),
+                modifier = Modifier
+                    .widthIn(max = maxWidth)
+                    .combinedClickable(
+                        // A plain tap does nothing except dismiss an active
+                        // selection, so tapping a bubble never has a surprising
+                        // effect.
+                        onClick = { selecting = false },
+                        onLongClick = {
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                            menuOpen = true
+                        },
+                        onLongClickLabel = menuLabel,
+                    ),
             ) {
+                val contentPadding = Modifier.padding(
+                    horizontal = dimensionResource(R.dimen.bubble_pad_h),
+                    vertical = dimensionResource(R.dimen.bubble_pad_v),
+                )
+                // Selection is hoisted to the whole bubble so a drag can run from
+                // the reasoning section through the answer in one go.
+                Selectable(enabled = selecting && canSelect) {
+                    if (isUser) {
+                        Text(
+                            text = message.text,
+                            color = textColor,
+                            style = MaterialTheme.typography.bodyLarge,
+                            modifier = contentPadding,
+                        )
+                    } else {
+                        AssistantContent(
+                            text = message.text,
+                            streaming = streaming,
+                            textColor = textColor,
+                            modifier = contentPadding,
+                        )
+                    }
+                }
+            }
+            MessageMenu(
+                expanded = menuOpen,
+                onDismiss = { menuOpen = false },
+                canCopy = message.text.isNotBlank(),
+                canSelect = canSelect,
+                onCopy = copyMessage,
+                onSelect = { selecting = true },
+                onEdit = onEdit,
+                onRegenerate = onRegenerate,
+            )
+        }
+        if (isUser) {
+            // Only rendered while the turn is actionable, so bubbles stay clean
+            // during generation.
+            if (onEdit != null) {
+                MessageActions {
+                    if (message.text.isNotBlank()) {
+                        MessageActionIcon(
+                            icon = Icons.Filled.ContentCopy,
+                            label = stringResource(R.string.action_copy),
+                            onClick = { copyMessage() },
+                        )
+                    }
+                    MessageActionIcon(
+                        icon = Icons.Filled.Edit,
+                        label = stringResource(R.string.action_edit),
+                        onClick = onEdit,
+                    )
+                }
+            }
+        } else {
+            MessageActions {
                 RoutingBadge(route = message.route)
                 if (message.text.isNotBlank()) {
-                    Icon(
-                        imageVector = Icons.Filled.ContentCopy,
-                        contentDescription = stringResource(R.string.action_copy),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier
-                            .clickable { clipboard.setText(AnnotatedString(message.text)) }
-                            .padding(dimensionResource(R.dimen.space_xxs))
-                            .size(dimensionResource(R.dimen.icon_small)),
+                    MessageActionIcon(
+                        icon = Icons.Filled.ContentCopy,
+                        label = stringResource(R.string.action_copy),
+                        onClick = { copyMessage() },
                     )
+                }
+                if (onRegenerate != null) {
+                    MessageActionIcon(
+                        icon = Icons.Filled.Refresh,
+                        label = stringResource(R.string.action_regenerate),
+                        onClick = onRegenerate,
+                    )
+                }
+                // Held back until the reply is finished: a running average that
+                // ticks on every token is a distraction, not a measurement. It
+                // takes only the width that's left, so on a narrow screen the
+                // number gives way to the controls rather than pushing them off.
+                if (!streaming) {
+                    message.stats?.let { stats ->
+                        GenerationSpeed(stats, modifier = Modifier.weight(1f, fill = false))
+                    }
                 }
             }
             if (message.route == Route.CLOUD && message.sentPayloadPreview != null) {
@@ -194,12 +283,136 @@ fun MessageBubble(
     }
 }
 
+/** Wraps [content] in a selection container only while [enabled]. */
+@Composable
+private fun Selectable(enabled: Boolean, content: @Composable () -> Unit) {
+    if (enabled) SelectionContainer { content() } else content()
+}
+
+/** The long-press menu for a bubble. Only the actions that apply are listed. */
+@Composable
+private fun MessageMenu(
+    expanded: Boolean,
+    onDismiss: () -> Unit,
+    canCopy: Boolean,
+    canSelect: Boolean,
+    onCopy: () -> Unit,
+    onSelect: () -> Unit,
+    onEdit: (() -> Unit)?,
+    onRegenerate: (() -> Unit)?,
+) {
+    DropdownMenu(expanded = expanded, onDismissRequest = onDismiss) {
+        if (canCopy) {
+            MessageMenuItem(
+                label = stringResource(R.string.action_copy),
+                icon = Icons.Filled.ContentCopy,
+                onClick = { onCopy(); onDismiss() },
+            )
+        }
+        if (canSelect) {
+            MessageMenuItem(
+                label = stringResource(R.string.action_select_text),
+                icon = Icons.Filled.SelectAll,
+                onClick = { onSelect(); onDismiss() },
+            )
+        }
+        onEdit?.let { edit ->
+            MessageMenuItem(
+                label = stringResource(R.string.action_edit),
+                icon = Icons.Filled.Edit,
+                onClick = { edit(); onDismiss() },
+            )
+        }
+        onRegenerate?.let { regenerate ->
+            MessageMenuItem(
+                label = stringResource(R.string.action_regenerate),
+                icon = Icons.Filled.Refresh,
+                onClick = { regenerate(); onDismiss() },
+            )
+        }
+    }
+}
+
+@Composable
+private fun MessageMenuItem(label: String, icon: ImageVector, onClick: () -> Unit) {
+    DropdownMenuItem(
+        text = { Text(label) },
+        leadingIcon = {
+            Icon(
+                icon,
+                contentDescription = null,
+                modifier = Modifier.size(dimensionResource(R.dimen.icon_small)),
+            )
+        },
+        onClick = onClick,
+    )
+}
+
+/**
+ * How fast this reply ran, in the action row so it costs no extra height.
+ *
+ * It is here because on-device speed is the thing that actually varies between
+ * one phone and the next, and between a cold model and a hot one — and because
+ * "is it worth a bigger model?" is otherwise unanswerable without guesswork.
+ */
+@Composable
+private fun GenerationSpeed(stats: GenerationStats, modifier: Modifier = Modifier) {
+    val tps = formatOneDecimal(stats.tokensPerSecond)
+    val readSeconds = formatOneDecimal(stats.prefillMs / 1000.0)
+    val description = stringResource(R.string.cd_reply_stats, tps, readSeconds)
+    Text(
+        text = stringResource(R.string.reply_stats, tps, readSeconds),
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier = modifier.semantics { contentDescription = description },
+    )
+}
+
+/** The row of small controls under a bubble (routing badge, copy, edit, regenerate). */
+@Composable
+private fun MessageActions(content: @Composable RowScope.() -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(dimensionResource(R.dimen.space_s)),
+        modifier = Modifier.padding(top = dimensionResource(R.dimen.space_xs)),
+    ) {
+        content()
+    }
+}
+
+/**
+ * One icon in a [MessageActions] row. The touch target is padded out beyond the
+ * drawn glyph so these stay tappable at their deliberately small size.
+ */
+@Composable
+private fun MessageActionIcon(
+    icon: ImageVector,
+    label: String,
+    onClick: () -> Unit,
+) {
+    Icon(
+        imageVector = icon,
+        contentDescription = label,
+        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier
+            .clickable(onClick = onClick)
+            .padding(dimensionResource(R.dimen.space_xs))
+            .size(dimensionResource(R.dimen.icon_small)),
+    )
+}
+
 /**
  * Renders a Domain AI reply: an optional collapsible reasoning section (for
  * models that emit a `<think>` block), then the answer. While the answer is
  * still streaming it shows as plain text (cheap — no Markdown reparse per
- * token); once complete it re-renders as selectable Markdown. If nothing has
- * arrived yet, an animated typing indicator stands in for the empty bubble.
+ * token); once complete it re-renders as Markdown. If nothing has arrived yet,
+ * a labelled typing indicator stands in for the empty bubble.
+ *
+ * Selection is not wrapped here: the enclosing bubble hoists it, so a drag can
+ * cross from the reasoning section into the answer, and so the bubble is free to
+ * answer a long press the rest of the time.
  */
 @Composable
 private fun AssistantContent(
@@ -221,19 +434,21 @@ private fun AssistantContent(
             )
         }
         when {
-            // Nothing yet and no reasoning to show: animated typing indicator so
-            // the bubble doesn't sit empty during prefill.
+            // Nothing yet and no reasoning to show. On a CPU with no dot-product
+            // kernels, reading a long conversation back can take many seconds
+            // before a single token appears — so say which of the two is
+            // happening rather than leaving three dots to imply a hang.
             answer.isBlank() && thinking == null && streaming ->
                 TypingIndicator(
                     color = textColor.copy(alpha = TYPING_ALPHA),
+                    label = stringResource(R.string.chat_phase_reading),
                     modifier = Modifier.padding(vertical = dimensionResource(R.dimen.space_xxs)),
                 )
             // Mid-stream: plain text, no Markdown reparse per token.
             streaming ->
                 Text(text = answer, color = textColor, style = MaterialTheme.typography.bodyLarge)
-            // Finished: full Markdown, selectable.
-            answer.isNotBlank() ->
-                SelectionContainer { MarkdownMessage(text = answer, textColor = textColor) }
+            // Finished: full Markdown.
+            answer.isNotBlank() -> MarkdownMessage(text = answer, textColor = textColor)
         }
     }
 }
@@ -264,26 +479,32 @@ private fun ReasoningSection(thinking: String, active: Boolean, color: Color) {
             )
         }
         if (expanded) {
-            SelectionContainer {
-                Text(
-                    text = thinking,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = muted,
-                    modifier = Modifier.padding(top = dimensionResource(R.dimen.space_xxs)),
-                )
-            }
+            Text(
+                text = thinking,
+                style = MaterialTheme.typography.bodySmall,
+                color = muted,
+                modifier = Modifier.padding(top = dimensionResource(R.dimen.space_xxs)),
+            )
         }
     }
 }
 
-/** Three pulsing dots shown while a reply is being generated. */
+/**
+ * Three pulsing dots shown while a reply is on its way, with [label] naming which
+ * stage of the wait this is — the difference between "the app is busy" and "the
+ * app has stopped", which dots alone cannot tell you.
+ *
+ * [color] dims the dots, which are decoration. The label is text and is drawn at
+ * full `onSurfaceVariant` instead, since a faded version of it would sit below
+ * the 4.5:1 floor the rest of the app is held to.
+ */
 @Composable
-fun TypingIndicator(color: Color, modifier: Modifier = Modifier) {
+fun TypingIndicator(color: Color, label: String, modifier: Modifier = Modifier) {
     val transition = rememberInfiniteTransition(label = "typing")
     val dot = dimensionResource(R.dimen.dot_size)
-    val typingLabel = stringResource(R.string.cd_typing)
+    val spokenLabel = "${stringResource(R.string.cd_typing)}. $label"
     Row(
-        modifier = modifier.semantics { contentDescription = typingLabel },
+        modifier = modifier.semantics { contentDescription = spokenLabel },
         horizontalArrangement = Arrangement.spacedBy(dimensionResource(R.dimen.space_xs)),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -308,6 +529,12 @@ fun TypingIndicator(color: Color, modifier: Modifier = Modifier) {
                     .background(color.copy(alpha = alpha)),
             )
         }
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = dimensionResource(R.dimen.space_xs)),
+        )
     }
 }
 

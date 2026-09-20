@@ -13,6 +13,9 @@
     <dimen name="space_l">16dp</dimen>
     <dimen name="space_xl">32dp</dimen>
 
+    <!-- Grouped settings surfaces -->
+    <dimen name="group_corner">16dp</dimen>
+
     <!-- Message bubbles -->
     <dimen name="bubble_corner">16dp</dimen>
     <dimen name="bubble_corner_tail">4dp</dimen>

@@ -1,10 +1,8 @@
 <resources>
     <string name="app_name">Domain AI</string>
-    <string name="tagline">Local-first AI. Your words stay on your device.</string>
 
     <!-- Chat screen -->
     <string name="chat_title">Domain AI</string>
-    <string name="chat_subtitle">Local-first AI</string>
     <string name="action_new_chat">New chat</string>
     <string name="action_history">Chat history</string>
     <string name="history_title">Chats</string>
@@ -18,12 +16,29 @@
     <string name="action_stop">Stop</string>
     <string name="action_copy">Copy</string>
     <string name="action_back">Back</string>
+    <string name="action_regenerate">Regenerate reply</string>
+    <string name="action_edit">Edit and resend</string>
+    <string name="action_select_text">Select text</string>
+    <string name="cd_message_menu">Message actions</string>
+    <string name="cd_jump_to_latest">Jump to the latest message</string>
+    <string name="edit_message_title">Edit message</string>
+    <string name="edit_message_send">Resend</string>
+    <plurals name="edit_message_discards">
+        <item quantity="one">Resending replaces the %1$d message after this one.</item>
+        <item quantity="other">Resending replaces the %1$d messages after this one.</item>
+    </plurals>
     <string name="empty_title">Ask Domain AI anything</string>
-    <string name="empty_body">Every reply is generated on your device. Nothing leaves the phone unless you turn on cloud mode and approve what gets sent.</string>
+    <string name="empty_body">Nothing leaves your device unless you pick a cloud model.</string>
+    <!--
+      Starter prompts. An empty chat that only describes itself leaves the user
+      to think of something; these give them a first move, and each one shows off
+      a different thing a small on-device model is actually good at.
+    -->
+    <string name="empty_suggestion_explain">Explain how a solar panel works</string>
+    <string name="empty_suggestion_write">Write a short thank-you note</string>
+    <string name="empty_suggestion_summarize">Summarize the pros and cons of remote work</string>
+    <string name="empty_suggestion_code">Write a Python function to reverse a list</string>
     <string name="input_hint_local">Message Domain AI…</string>
-    <string name="input_hint_cloud">Message (will use cloud)…</string>
-    <string name="cd_cloud_on">Cloud on for this message</string>
-    <string name="cd_local_only">Local only</string>
 
     <!-- Routing badges -->
     <string name="badge_local">On-device</string>
@@ -31,52 +46,49 @@
     <string name="badge_blocked">Blocked</string>
     <string name="sent_redacted">Sent (redacted): “%1$s”</string>
 
-    <!-- Privacy banner -->
-    <string name="banner_killswitch">Kill switch ON · fully offline</string>
-    <string name="banner_cloud_allowed">Cloud allowed · local by default</string>
-    <string name="banner_local_only">Local only · cloud not consented</string>
-
-    <!-- Cloud review dialog -->
-    <string name="dialog_cloud_title">Review before sending to cloud</string>
-    <string name="dialog_cloud_intro">This message will leave your device. Here is exactly what the cloud provider will receive:</string>
-    <string name="dialog_redacted_count">Redacted %1$d item(s): %2$s</string>
-    <string name="dialog_no_pii">No personal information was detected to redact.</string>
-    <string name="dialog_send_cloud">Send to cloud</string>
-    <string name="dialog_keep_local">Keep on-device</string>
-
     <!-- Settings screen -->
     <string name="settings_title">Privacy &amp; Settings</string>
     <string name="settings_section_privacy">Privacy</string>
     <string name="settings_section_cloud">Cloud</string>
     <string name="advanced_endpoint_title">Advanced: custom endpoint</string>
-    <string name="advanced_endpoint_summary">Point Domain AI at any OpenAI-compatible API.</string>
+    <string name="advanced_endpoint_summary">Any OpenAI-compatible API</string>
+    <!--
+      Switch labels carry no permanent summary: the title states the control, and
+      the reasoning lives in privacy_about_body, one tap away. The single subtitle
+      that remains marks a consequence the title genuinely cannot carry — that
+      allowing these models means accepting they may train on what you type.
+    -->
     <string name="setting_killswitch_title">Network kill switch</string>
-    <string name="setting_killswitch_summary">Blocks all network access — fully offline.</string>
     <string name="setting_consent_title">Allow cloud mode</string>
-    <string name="setting_consent_summary">Required before any message can use the cloud.</string>
     <string name="setting_redact_title">Redact before sending</string>
-    <string name="setting_redact_summary">Strips emails, phone numbers and similar before any cloud send.</string>
     <string name="setting_datalog_title">Allow data-logging models</string>
-    <string name="setting_datalog_summary">Some free cloud models may log or train on your prompts. Required to use them.</string>
+    <string name="setting_datalog_summary">These models may train on your prompts</string>
     <string name="setting_crash_title">Send crash reports</string>
-    <string name="setting_crash_summary">Share crash reports to help fix bugs. Off by default; no analytics.</string>
+    <string name="privacy_about_label">How your data is handled</string>
+    <string name="privacy_about_body">The kill switch blocks every outbound request at a single chokepoint. With it on, Domain AI is completely offline.\n\nCloud mode must be allowed before any message can leave your device, and redaction strips emails, phone numbers, card numbers and similar from a prompt before it is sent. Each cloud reply shows you the exact redacted text that was sent.\n\nSome free cloud models log or train on prompts. Those stay unavailable unless you allow them.\n\nCrash reports are off by default and never contain conversation content. Domain AI has no analytics and no trackers, and your conversations are encrypted on this device with a hardware-backed key.</string>
     <string name="setting_base_url">Base URL (OpenAI-compatible)</string>
     <string name="setting_api_key">API key</string>
     <string name="setting_model">Model</string>
     <string name="setting_save_provider">Save provider</string>
-    <string name="setting_clear_provider">Clear</string>
-    <string name="setting_provider_saved">Provider saved (stored encrypted on-device).</string>
-    <string name="setting_provider_cleared">Provider cleared.</string>
-    <string name="settings_footer">Domain AI collects no analytics and contains no trackers. Conversations are encrypted on-device with a hardware-backed key.</string>
 
     <!-- First-launch acceptance (Terms of Service + Privacy Policy) -->
     <string name="accept_title">Welcome to Domain AI</string>
-    <string name="accept_intro">Domain AI is a local-first AI assistant. Answers are generated on your device by default and your conversations are stored encrypted on the phone. Please review and accept the terms below to continue.</string>
+    <string name="accept_intro">A local-first AI assistant. Here is what that means:</string>
+    <!--
+      The three promises that actually distinguish this app, as single lines. The
+      full Terms and Privacy Policy remain on this screen in their entirety,
+      one tap away, and accepting still requires a deliberate action.
+    -->
+    <string name="accept_point_local">Replies are generated on this device. No account, no server.</string>
+    <string name="accept_point_cloud">Nothing is sent anywhere unless you pick a cloud model — and it is redacted first.</string>
+    <string name="accept_point_storage">Chats are encrypted on your phone. No analytics, no trackers.</string>
+    <string name="accept_legal_prompt">By continuing you accept both documents below.</string>
+    <string name="accept_read">Read</string>
     <string name="accept_tos_heading">Terms of Service</string>
     <string name="accept_tos_body">By using Domain AI you agree to use it lawfully and at your own risk. Domain AI is provided “as is”, without warranties of any kind. AI output may be inaccurate or incomplete — do not rely on it for medical, legal, financial, or other professional decisions. You are responsible for the content you enter and for any model you download or import. To the maximum extent permitted by law, the developers are not liable for any damages arising from your use of the app. These terms may change with future updates; continued use after an update means you accept the updated terms.</string>
     <string name="accept_privacy_heading">Privacy Policy</string>
     <string name="accept_privacy_body">Local by default: your messages are processed on-device and never leave the phone unless you pick a cloud model. Domain AI contains no analytics and no trackers. Conversations and credentials are encrypted on-device with a hardware-backed key.\n\nCloud features (optional): if you choose a cloud model, your message — automatically redacted to strip detected emails, phone numbers, and similar identifiers — is sent to the provider you selected, solely to generate a reply. Some free cloud models may log or train on prompts; these require a separate, explicit permission. The exact redacted text sent is shown beneath each cloud reply.\n\nCrash reporting (optional, off by default): you may opt in to share crash and error reports (Firebase Crashlytics) to help fix bugs; only crash/error data is sent — never your conversations.\n\nYour controls: a network kill switch can block all network access, and every cloud and crash-reporting permission can be revoked anytime in Settings. Model files you download or import stay in app-private storage and are excluded from device backups.</string>
-    <string name="accept_consent_note">Accepting enables optional cloud features (cloud model use and free data-logging models). You stay fully on-device until you pick a cloud model, and you can disable these anytime in Settings.</string>
+    <string name="accept_consent_note">Accepting also turns on the optional cloud features. You stay fully on-device until you choose a cloud model, and both are revocable in Settings.</string>
     <string name="accept_action_accept">Accept &amp; continue</string>
     <string name="accept_action_decline">Decline &amp; exit</string>
 
@@ -84,11 +96,8 @@
     <string name="cd_model_picker">Choose model</string>
     <string name="model_picker_title">Choose model</string>
     <string name="model_picker_local">On-device</string>
-    <string name="model_picker_cloud">Cloud</string>
     <string name="model_picker_offline">Offline responder</string>
     <string name="model_picker_no_local">No on-device model yet. Download or import one in Settings.</string>
-    <string name="model_picker_no_cloud">No cloud model set. Add one in Settings.</string>
-    <string name="model_label_cloud">%1$s · Cloud</string>
     <string name="chip_offline">Offline</string>
 
     <!-- Installed models list -->
@@ -100,28 +109,95 @@
     <string name="model_use">Use</string>
     <string name="model_none_installed">No models yet. Download one below or import a .gguf.</string>
 
+    <string name="settings_group_models">Models</string>
+    <string name="settings_group_about">About</string>
+
+    <!-- Collapsed-section status lines: the answer without the tap -->
+    <string name="settings_status_model_none">No model loaded</string>
+    <string name="settings_status_model_loading">Loading\u2026</string>
+    <string name="settings_status_model_error">Could not load</string>
+    <string name="settings_status_installed">%1$d installed</string>
+    <string name="settings_status_space_connected">Connected \u00b7 %1$s</string>
+    <string name="settings_status_space_saved">Saved \u00b7 %1$s</string>
+    <string name="settings_status_space_none">Not connected</string>
+    <string name="settings_status_cloud_saved">OpenRouter key saved</string>
+    <string name="settings_status_cloud_none">Not configured</string>
+    <string name="settings_status_profiles">%1$d saved \u00b7 %2$s active</string>
+    <string name="settings_status_profiles_inactive">%1$d saved \u00b7 none active</string>
+    <string name="settings_status_profiles_none">None yet</string>
+    <string name="cd_expand_section">Expand %1$s</string>
+    <string name="cd_collapse_section">Collapse %1$s</string>
+
+    <!-- System info -->
+    <string name="settings_section_system">System info</string>
+    <string name="system_group_device">Device</string>
+    <string name="system_group_cpu">Processor</string>
+    <string name="system_group_engine">Inference engine</string>
+    <string name="system_group_memory">Memory</string>
+    <string name="system_group_plan">Current plan</string>
+    <string name="system_row_model">Model</string>
+    <string name="system_row_android">Android</string>
+    <string name="system_row_abi">ABI</string>
+    <string name="system_row_app">App version</string>
+    <string name="system_row_cores">Cores</string>
+    <string name="system_row_features">Features</string>
+    <string name="system_row_dotprod">Dot product</string>
+    <string name="system_row_variant">CPU build in use</string>
+    <string name="system_row_build">Built with</string>
+    <string name="system_row_backends">Backends</string>
+    <string name="system_row_ram">RAM</string>
+    <string name="system_row_thermal">Thermal</string>
+    <string name="system_row_power_save">Battery saver</string>
+    <string name="system_row_threads">Threads</string>
+    <string name="system_row_context">Context</string>
+    <string name="system_row_batch">Prompt batch</string>
+    <string name="system_row_constraints">Adapted for</string>
+    <string name="system_value_unknown">Unknown</string>
+    <string name="system_value_yes">Yes</string>
+    <string name="system_value_no">No</string>
+    <string name="system_value_on">On</string>
+    <string name="system_value_off">Off</string>
+    <string name="system_value_pending">Not started yet</string>
+    <string name="system_value_none">Nothing — running at full device capability</string>
+    <string name="system_ram_value">%1$s free of %2$s</string>
+    <string name="system_auto_value">%1$d (Auto)</string>
+    <string name="system_chosen_value">%1$d (your choice)</string>
+    <string name="system_max_suffix">max %1$d</string>
+    <string name="system_tokens_suffix">tokens</string>
+    <string name="action_copy_system_info">Copy for a bug report</string>
+    <string name="action_refresh_system_info">Refresh</string>
+    <string name="system_info_copied">System info copied.</string>
+
     <!-- Diagnostics (debug builds only) -->
     <string name="settings_section_diagnostics">Diagnostics</string>
-    <string name="diagnostics_summary">Share this app\'s logs as a text file. Debug builds only.</string>
+    <string name="diagnostics_summary">Debug builds only</string>
     <string name="action_share_diagnostics">Share app logs</string>
 
     <!-- GPU offload + speed benchmark -->
+    <!-- Engine: the automatic decisions, made overridable -->
+    <string name="engine_heading">Engine</string>
+    <string name="setting_cache_title">Reuse prompt cache</string>
+    <string name="setting_cache_summary">Follow-ups skip re-reading the whole chat</string>
+    <string name="setting_strict_title">Strict core pinning</string>
+    <string name="setting_strict_summary">One worker per core; benchmark to compare</string>
+    <string name="setting_priority_title">High thread priority</string>
+    <string name="setting_priority_summary">Steadier speed, more UI stutter</string>
     <string name="setting_gpu_title">GPU acceleration</string>
-    <string name="setting_gpu_summary">Offload layers to the GPU when supported; falls back to CPU automatically. Benchmark to compare.</string>
+    <string name="setting_gpu_summary">Falls back to CPU automatically</string>
     <string name="action_benchmark">Benchmark speed</string>
     <string name="benchmark_running">Benchmarking…</string>
     <string name="benchmark_result">%1$s tok/s · prefill %2$d ms · %3$d tokens (%4$s)</string>
 
     <!-- Context length (user-configurable) -->
     <string name="setting_context_title">Context length</string>
-    <string name="setting_context_summary">How much conversation the model remembers. Larger uses more memory.</string>
+    <string name="setting_context_summary">Larger uses more memory</string>
     <string name="context_auto_label">Auto (%1$d)</string>
     <string name="context_tokens_label">%1$d tokens</string>
     <string name="cd_context_menu">Choose context length</string>
 
     <!-- Generation threads (user-configurable) -->
     <string name="setting_threads_title">Generation threads</string>
-    <string name="setting_threads_summary">CPU cores used to generate replies. More can be faster but warmer.</string>
+    <string name="setting_threads_summary">More can be faster, but warmer</string>
     <string name="threads_auto_label">Auto (%1$d)</string>
     <string name="threads_count_label">%1$d threads</string>
     <string name="cd_threads_menu">Choose generation threads</string>
@@ -133,17 +209,15 @@
     <string name="inference_panel_performance">Performance</string>
 
     <!-- On-device model section -->
+    <string name="models_title">On-device model</string>
     <string name="settings_section_model">On-device model</string>
     <string name="model_device_ram">Device RAM: %1$d MB</string>
     <string name="model_state_none">No model loaded — answering with the offline responder.</string>
     <string name="model_state_loading">Loading %1$s…</string>
     <string name="model_state_ready">Active: %1$s</string>
     <string name="model_state_error">Model error: %1$s</string>
-    <string name="model_downloading">Downloading… %1$d%%</string>
     <string name="model_download_detail">Downloading %1$s — %2$d%% (%3$s / %4$s)</string>
     <string name="model_initializing">Initializing model…</string>
-    <string name="model_retry">Retry</string>
-    <string name="model_ready_check">✓ Ready</string>
     <string name="model_download">Download</string>
     <string name="model_import">Import .gguf</string>
     <string name="model_unload">Unload</string>
@@ -181,12 +255,17 @@
     <string name="reasoning_thinking">Thinking…</string>
     <string name="cd_typing">Generating a reply</string>
 
+    <!-- What the app is doing while a reply is still on its way -->
+    <string name="chat_phase_preparing">Preparing…</string>
+    <string name="chat_phase_reading">Reading your message…</string>
+
+    <!-- How fast an on-device reply ran, shown under it -->
+    <string name="reply_stats">%1$s tok/s · %2$s s read</string>
+    <string name="cd_reply_stats">%1$s tokens per second, after reading the prompt for %2$s seconds</string>
+
     <!-- Active cloud provider / validation -->
-    <string name="provider_active">Connected · %1$s</string>
-    <string name="provider_delete">Delete API key</string>
     <string name="provider_validating">Validating connection…</string>
     <string name="provider_invalid">Couldn\'t validate: %1$s</string>
-    <string name="provider_locked_hint">To switch provider or model, delete the current API key first.</string>
 
     <!-- On-device work notification (download + background generation) -->
     <string name="notif_channel_name">On-device activity</string>
@@ -197,7 +276,6 @@
     <string name="notif_working">Working…</string>
 
     <!-- OpenRouter free models -->
-    <string name="settings_section_openrouter">OpenRouter free models</string>
     <string name="openrouter_hint">Needs a free OpenRouter key; may log prompts — enable \"Allow data-logging models\" above.</string>
     <string name="openrouter_key_label">OpenRouter API key</string>
     <string name="openrouter_fetch">Fetch free models</string>
@@ -206,5 +284,47 @@
     <string name="openrouter_use">Use</string>
     <string name="openrouter_logs_tag">logs data</string>
     <string name="openrouter_ctx">%1$dk ctx</string>
-    <string name="openrouter_active">Active cloud model: %1$s</string>
+
+    <!-- Self-hosted Space backend -->
+    <string name="space_hint">Connect to your self-hosted HF Docker Space running llama.cpp. Enter the Space URL and your SPACE_TOKEN to browse and load models remotely.</string>
+    <string name="space_url_label">Space URL</string>
+    <string name="space_token_label">Space token</string>
+    <string name="space_connect">Connect</string>
+    <string name="space_connecting">Connecting…</string>
+    <string name="space_refresh">Refresh catalog</string>
+    <string name="space_loading_catalog">Loading catalog…</string>
+    <string name="space_catalog_empty">No models in catalog — tap "Refresh catalog".</string>
+    <string name="space_load">Load</string>
+    <string name="space_downloading">Downloading %1$d%%</string>
+    <string name="space_loading_model">Loading into memory…</string>
+    <string name="space_cached">Cached — loading now…</string>
+    <string name="space_model_cached">Cached</string>
+    <string name="space_size">~%1$d MB</string>
+    <string name="space_unreachable">Could not reach the Space.</string>
+    <string name="space_loading_in_progress">Space is loading a model — use Load to track progress.</string>
+    <string name="space_prev_load_error">Previous load failed: %1$s</string>
+    <string name="space_connected_to">Connected: %1$s</string>
+    <string name="space_disconnect">Disconnect</string>
+
+    <!-- OpenRouter key persistence -->
+    <string name="openrouter_key_saved">OpenRouter key saved</string>
+    <string name="openrouter_change_key">Change key</string>
+    <string name="openrouter_remove_key">Remove key</string>
+
+    <!-- Saved inference profiles -->
+    <string name="settings_section_my_server">My server</string>
+    <string name="settings_section_cloud_api">Cloud API</string>
+    <string name="settings_section_profiles">Saved profiles</string>
+    <string name="model_picker_my_server">My server</string>
+    <string name="model_picker_cloud_api">Cloud API</string>
+    <string name="model_picker_no_profiles">No profiles yet — add one in Settings.</string>
+    <string name="profile_empty">No profiles saved yet. Connect a server or add an API key above.</string>
+    <string name="profile_switch">Use</string>
+    <string name="profile_active">Active</string>
+    <string name="profile_rename">Rename</string>
+    <string name="profile_rename_title">Rename profile</string>
+    <string name="profile_delete">Delete</string>
+    <string name="profile_type_space">My server</string>
+    <string name="profile_type_openrouter">OpenRouter</string>
+    <string name="profile_type_custom">Custom</string>
 </resources>

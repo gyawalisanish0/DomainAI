@@ -22,10 +22,17 @@ strips sensitive information before anything is sent.
 - **Network kill switch** — outbound requests made impossible at one auditable chokepoint; on by default.
 - **PII redaction** — emails, phones, SSNs, cards and IPs stripped before any cloud call; each cloud reply shows the exact redacted text that was sent.
 - **Routing transparency** — every reply badged *On-device*, *Cloud*, or *Blocked*.
+- **Redo a turn** — regenerate any reply, or reword a question and ask it again; the redone turn is routed and redacted under the settings in force then.
 - **Encrypted at rest** — AES-256 history keyed by the Android Keystore; backups off; no analytics or trackers.
 - **GPU acceleration** with an in-app CPU-vs-GPU benchmark, and a **configurable context window**.
+- **Self-hosted Space backend** — deploy `backend/` as a Hugging Face Docker Space to run a llama.cpp model you control. Browse a curated model catalog from the app, load models on demand with live download progress, and use it as a private cloud backend. Supports team mode (one Space, multiple clients) and community forking.
+- **OpenRouter free-model picker** — connect to free OpenRouter models with one tap.
+- **Adaptive performance** — inference threads, context length, and prompt-prefill batch size are re-decided at every model load against the phone's live state: free memory, thermal throttling and battery saver, not just total RAM. All three remain user-configurable.
+- **System info panel** — Settings shows what the app detected (CPU features, engine build flags, loaded backends, memory, thermal state) and the plan it chose, with the reason it was scaled back. One tap copies it for a bug report.
 
 ## Tech stack
+
+### Android app
 
 | Layer | Technology | Version |
 | --- | --- | --- |
@@ -35,17 +42,44 @@ strips sensitive information before anything is sent.
 | SDK | Android min / target | 26 / 34 |
 | On-device LLM | llama.cpp (vendored) + NDK / CMake | 26.3.11579264 / 3.22.1 |
 | Concurrency | Coroutines + Flow | 1.8.1 |
-| Cloud (opt-in) | OkHttp | 4.12.0 |
+| Cloud HTTP | OkHttp | 4.12.0 |
 | Serialization | kotlinx.serialization | 1.6.3 |
 | Storage | DataStore / security-crypto (AES-256) | 1.1.1 / 1.1.0-alpha06 |
 | Navigation | navigation-compose | 2.8.0 |
 | Markdown | markdown-renderer / highlights | 0.30.0 / 0.9.1 |
 | Crash reporting (opt-in) | Firebase Crashlytics (BOM) | 33.5.1 |
 
+### Backend (`backend/`)
+
+| Layer | Technology | Version |
+| --- | --- | --- |
+| Language | Python | 3.11 |
+| API server | FastAPI + Uvicorn | 0.115.5 / 0.32.1 |
+| Inference | llama-cpp-python (AVX2/FMA/F16C; CUDA optional) | 0.3.4 |
+| Model hub | huggingface_hub | 0.26.5 |
+| Deployment | HF Docker Space (port 7860) | — |
+
+## Self-hosted backend
+
+`backend/` is a FastAPI server that runs a llama.cpp model directly inside a
+Hugging Face Docker Space. Deploy it once, point the Android app at it, and you
+have a fully private cloud backend — your model, your Space, your data.
+
+→ **[backend/README.md](backend/README.md)** — deploy guide, secrets table, local dev.  
+→ **[backend/CHANGELOG.md](backend/CHANGELOG.md)** — backend version history.
+
 ## Requirements
 
-**Android 8.0+ (API 26)** on an **arm64-v8a** device, plus a GGUF model (download
-in-app or import your own).
+**Android 8.0+ (API 26)** on an **arm64-v8a** device, plus either:
+- a GGUF model (download in-app from Settings → On-device model, or import your own), or
+- a cloud provider configured in Settings → Cloud (self-hosted Space, OpenRouter, or a custom OpenAI-compatible endpoint).
+
+No CPU features beyond baseline arm64 are required. The inference engine ships its
+CPU backend built once per feature tier and selects one at runtime, so a modern chip
+gets the dot-product, fp16, i8mm and SVE kernels it can run while an early part like
+the Snapdragon 835 still works. See
+[ARCHITECTURE.md](docs/ARCHITECTURE.md#cpu-kernel-selection) for how the tier is
+chosen, and why the obvious shortcut — naming a higher baseline — is the wrong tool.
 
 ## Install
 
