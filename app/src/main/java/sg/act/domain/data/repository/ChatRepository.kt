@@ -6,6 +6,7 @@ import sg.act.domain.data.local.ConversationStore
 import sg.act.domain.data.local.RemoteConfigStore
 import sg.act.domain.data.local.SelectionStore
 import sg.act.domain.data.model.Conversation
+import sg.act.domain.data.model.GenerationStats
 import sg.act.domain.data.model.Message
 import sg.act.domain.data.model.Role
 import sg.act.domain.data.model.Route
@@ -50,6 +51,8 @@ class ChatRepository(
     private val contextTokens: () -> Int = { 4096 },
     /** Whether a real on-device model is loaded (summarization needs one). */
     private val localModelLoaded: () -> Boolean = { false },
+    /** Timing of the generation that just finished, recorded on on-device replies. */
+    private val lastGenerationStats: () -> GenerationStats? = { null },
 ) {
 
     private val router = PrivacyRouter(
@@ -197,6 +200,7 @@ class ChatRepository(
             finalizeReply(
                 stripLeadingNameLabel(builder.toString()),
                 outcome.note ?: context.getString(R.string.reply_stopped),
+                statsFor(outcome.route),
             )
             throw e
         } catch (e: Exception) {
@@ -206,8 +210,20 @@ class ChatRepository(
             if (foreground) sg.act.domain.core.ForegroundWork.end(context)
         }
 
-        finalizeReply(stripLeadingNameLabel(builder.toString()), outcome.note ?: errorNote)
+        finalizeReply(
+            stripLeadingNameLabel(builder.toString()),
+            outcome.note ?: errorNote,
+            statsFor(outcome.route),
+        )
     }
+
+    /**
+     * Timing for the reply that just finished, for on-device turns only. A cloud
+     * reply's speed is the network's, not this device's, and the engine's counters
+     * would be left over from whenever a local model last ran.
+     */
+    private fun statsFor(route: Route): GenerationStats? =
+        if (route == Route.LOCAL) lastGenerationStats() else null
 
     /**
      * Re-answer the most recent question: the reply it produced is discarded and
@@ -246,14 +262,14 @@ class ChatRepository(
         )
 
     /** Write the reply's final text (body plus any note) and persist, uncancellably. */
-    private suspend fun finalizeReply(body: String, note: String?) {
+    private suspend fun finalizeReply(body: String, note: String?, stats: GenerationStats?) {
         val finalText = when {
             note == null -> body
             body.isBlank() -> "_${note}_"
             else -> "$body\n\n_${note}_"
         }
         withContext(NonCancellable) {
-            updateActive { it.updateLastText(finalText) }
+            updateActive { it.updateLastText(finalText).updateLastStats(stats) }
             persist()
         }
     }
@@ -471,6 +487,18 @@ class ChatRepository(
         val updated = messages.toMutableList()
         updated[updated.lastIndex] = updated.last().copy(text = text)
         return copy(messages = updated, updatedAt = System.currentTimeMillis())
+    }
+
+    /**
+     * Record how fast the most recent reply ran. A null [stats] leaves the message
+     * alone: a cloud turn has nothing to record, and a local turn that produced no
+     * tokens (an immediate error) would otherwise be labelled "0 tok/s".
+     */
+    private fun Conversation.updateLastStats(stats: GenerationStats?): Conversation {
+        if (stats == null || messages.isEmpty()) return this
+        val updated = messages.toMutableList()
+        updated[updated.lastIndex] = updated.last().copy(stats = stats)
+        return copy(messages = updated)
     }
 
     private fun Conversation.retitleIfNeeded(firstPrompt: String) =

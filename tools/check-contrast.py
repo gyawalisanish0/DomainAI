@@ -41,6 +41,8 @@ PAIRINGS: list[tuple[str, str, float, str]] = [
     ("on_background", "background", 4.5, "body text on the page"),
     ("on_surface_variant", "background", 4.5, "secondary text on the page"),
     ("on_surface", "surface", 4.5, "text on a sheet or dialog"),
+    ("on_surface", "surface_variant", 4.5, "a reply's text in its bubble"),
+    ("on_surface_variant", "surface_variant", 4.5, "'Reading your message…' in the bubble"),
     ("primary", "background", 3.0, "section header (label size)"),
     ("primary", "surface_container_low", 3.0, "'Read' / inline affordance"),
     ("on_primary", "primary", 4.5, "filled button label"),

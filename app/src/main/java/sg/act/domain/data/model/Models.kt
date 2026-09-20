@@ -21,6 +21,26 @@ enum class Route {
     BLOCKED,
 }
 
+/**
+ * How fast one on-device reply actually ran. Recorded per reply rather than
+ * globally because the honest answer to "is this model too big for my phone?"
+ * changes with prompt length, context setting and how warm the device is — a
+ * single benchmark number in Settings cannot show that drift, and a line under
+ * the reply that produced it can.
+ *
+ * Null on cloud replies, and on anything restored from a conversation saved
+ * before this was recorded.
+ */
+@Serializable
+data class GenerationStats(
+    /** Time spent reading the prompt before the first token appeared, in ms. */
+    val prefillMs: Long,
+    /** Tokens generated. */
+    val tokens: Int,
+    /** Generation speed, in tokens per second. */
+    val tokensPerSecond: Double,
+)
+
 @Serializable
 data class Message(
     val id: String = UUID.randomUUID().toString(),
@@ -30,6 +50,8 @@ data class Message(
     /** For CLOUD replies: the redacted text that actually left the device. */
     val sentPayloadPreview: String? = null,
     val timestamp: Long = System.currentTimeMillis(),
+    /** For on-device replies: how fast this one ran. */
+    val stats: GenerationStats? = null,
 )
 
 @Serializable

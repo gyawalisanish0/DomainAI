@@ -1,5 +1,10 @@
 package sg.act.domain.ui.chat
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -24,6 +29,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Settings
@@ -46,6 +52,7 @@ import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.NavigationDrawerItemDefaults
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -54,6 +61,7 @@ import androidx.compose.material3.rememberDrawerState
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -296,6 +304,12 @@ fun ChatScreen(
                             }
                         }
                     }
+                    JumpToLatest(
+                        listState = listState,
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(bottom = gap),
+                    )
                 }
             }
 
@@ -602,6 +616,64 @@ private fun LazyListState.isNearBottom(lastIndex: Int): Boolean {
     return lastVisible >= lastIndex - 1
 }
 
+/**
+ * The way back down. Auto-scroll deliberately stops following once you scroll up
+ * to re-read something, which without this leaves the only route back a long
+ * manual flick — and a reply that is still streaming keeps lengthening the
+ * distance. It appears only when the end of the conversation is genuinely off
+ * screen, so it never sits over the newest message.
+ */
+@Composable
+private fun JumpToLatest(listState: LazyListState, modifier: Modifier = Modifier) {
+    val scope = rememberCoroutineScope()
+    // A tall final message can be the last *item* and still run well past the
+    // bottom edge, so the test is where its content ends, not which item it is.
+    val visible by remember {
+        derivedStateOf {
+            val info = listState.layoutInfo
+            val last = info.visibleItemsInfo.lastOrNull() ?: return@derivedStateOf false
+            last.index < info.totalItemsCount - 1 ||
+                last.offset + last.size > info.viewportEndOffset + JUMP_SLACK_PX
+        }
+    }
+    AnimatedVisibility(
+        visible = visible,
+        enter = fadeIn() + scaleIn(),
+        exit = fadeOut() + scaleOut(),
+        modifier = modifier,
+    ) {
+        SmallFloatingActionButton(
+            onClick = {
+                scope.launch {
+                    val target = listState.layoutInfo.totalItemsCount - 1
+                    if (target < 0) return@launch
+                    listState.animateScrollToItem(target)
+                    // Land flush against the bottom even when that item is taller
+                    // than the viewport.
+                    listState.scrollToItem(target, Int.MAX_VALUE)
+                }
+            },
+            // The brand pair, not a Material tonal default: the tonal slots this
+            // theme doesn't override come from the stock M3 palette and would put
+            // an unrelated hue on top of the conversation.
+            containerColor = MaterialTheme.colorScheme.primary,
+            contentColor = MaterialTheme.colorScheme.onPrimary,
+        ) {
+            Icon(
+                Icons.Filled.KeyboardArrowDown,
+                contentDescription = stringResource(R.string.cd_jump_to_latest),
+            )
+        }
+    }
+}
+
+/**
+ * How far the last message may overhang the viewport before the jump button
+ * appears. A couple of pixels of rounding shouldn't count as "there's more
+ * below"; the height of a line of text should.
+ */
+private const val JUMP_SLACK_PX = 24
+
 /** The subtitle under "Domain AI": the name of the currently selected model. */
 @Composable
 private fun selectedModelLabel(state: ChatUiState): String {
@@ -854,7 +926,13 @@ private fun ModelPickerRow(
     }
 }
 
-/** Animated dots bubble shown while the oracle reply is being prepared. */
+/**
+ * The bubble that stands in before the reply exists. This covers history prep,
+ * the occasional local summarization pass, and routing — work that happens
+ * before the model has even seen the prompt, and which on a big conversation is
+ * not instant. Saying "Preparing…" here and "Reading your message…" once prefill
+ * starts turns one undifferentiated wait into two legible ones.
+ */
 @Composable
 private fun PendingTypingBubble() {
     val corner = dimensionResource(R.dimen.bubble_corner)
@@ -873,7 +951,8 @@ private fun PendingTypingBubble() {
             ),
         ) {
             TypingIndicator(
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = TYPING_LABEL_ALPHA),
+                label = stringResource(R.string.chat_phase_preparing),
                 modifier = Modifier.padding(
                     horizontal = dimensionResource(R.dimen.bubble_pad_h),
                     vertical = dimensionResource(R.dimen.bubble_pad_v),
@@ -882,6 +961,8 @@ private fun PendingTypingBubble() {
         }
     }
 }
+
+private const val TYPING_LABEL_ALPHA = 0.6f
 
 @Composable
 private fun ModelLoadingBanner() {

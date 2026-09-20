@@ -8,6 +8,7 @@ import sg.act.domain.data.local.ModelDescriptor
 import sg.act.domain.data.local.ModelSource
 import sg.act.domain.data.local.ModelStorage
 import sg.act.domain.data.local.ModelStore
+import sg.act.domain.data.model.GenerationStats
 import sg.act.domain.llama.LLamaAndroid
 import sg.act.domain.privacy.CpuFeatures
 import kotlinx.coroutines.CancellationException
@@ -466,11 +467,28 @@ class ModelManager(
     }
 
     /**
+     * Timing of the most recent on-device generation, or null if none has run or
+     * it produced no tokens. Read once a reply finishes, to record on it.
+     */
+    fun lastGenerationStats(): GenerationStats? {
+        val tokens = llama.lastGenTokens()
+        if (tokens <= 0) return null
+        return GenerationStats(
+            prefillMs = llama.lastPrefillMs(),
+            tokens = tokens,
+            tokensPerSecond = llama.lastGenTps(),
+        )
+    }
+
+    /**
      * Run a fixed prompt through the loaded model and return its timing, so GPU vs
      * CPU can be compared on identical input. Returns null if no model is loaded.
      */
     suspend fun benchmark(): BenchmarkResult? {
         val b = backend ?: return null
+        // Start cold. Otherwise a second run of this same fixed prompt reuses the
+        // first one's KV cache and reports a prefill time no real question sees.
+        llama.clearPromptCache()
         b.generate(BENCHMARK_PROMPT, emptyList()).collect { /* consume to completion */ }
         val result = BenchmarkResult(
             prefillMs = llama.lastPrefillMs(),

@@ -58,8 +58,8 @@ static constexpr int N_UBATCH = 512;
 // tokens). Single run-loop thread, so a plain static is safe.
 static std::string g_token_cache;
 
-// The prompt tokens currently resident in the KV cache, and the context they
-// belong to. Together these let a follow-up turn reuse the work already done.
+// The tokens currently resident in the KV cache, and the context they belong to.
+// Together these let a follow-up turn reuse the work already done.
 //
 // Every send used to clear the cache and re-decode the whole conversation. On a
 // CPU with no dot-product kernels that is the dominant cost of a multi-turn chat:
@@ -614,6 +614,23 @@ Java_sg_act_domain_llama_LLamaAndroid_completion_1loop(
 
     if (llama_decode(ctx, *batch) != 0) {
         LOGe("llama_decode failed during generation");
+        // The KV cache no longer matches anything we can name; a later turn must
+        // not reuse a prefix that was never fully decoded.
+        forget_cached_prompt();
+        return out;
+    }
+
+    // The reply is now in the KV cache at position n_cur, so record it alongside
+    // the prompt. The next turn's prompt quotes this reply back, and matching it
+    // here is what lets a long answer be skipped rather than re-read.
+    //
+    // The size check is the invariant that makes this safe: g_cached_prompt must
+    // describe KV positions [0, size) exactly. Re-tokenizing the reply as part of
+    // a larger prompt can split pieces differently, but that only shortens the
+    // common prefix — it never makes a wrong one look right.
+    if (g_reuse_prompt_cache && g_cached_ctx == ctx &&
+        g_cached_prompt.size() == static_cast<size_t>(n_cur)) {
+        g_cached_prompt.push_back(new_token);
     }
     return out;
 }

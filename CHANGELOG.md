@@ -21,7 +21,9 @@ All notable changes to Domain AI are documented here. This project adheres to
   dot-product kernels, the dominant cost of a multi-turn chat. Chat templates build
   each prompt by appending to the last, so almost all of that work was identical to
   what had just been done. A turn now keeps whatever of the previous prompt is
-  still a prefix of the new one and decodes only the remainder.
+  still a prefix of the new one and decodes only the remainder — the reply it
+  produced included, since the next prompt quotes that back verbatim. Regenerating
+  an answer costs a single token of prefill rather than the whole conversation.
 - **Auto thread count follows the big core cluster, not half the cores.** ggml's
   threadpool synchronises at every barrier, so a batch finishes when its slowest
   worker does; spilling onto little cores adds a straggler rather than throughput.
@@ -106,6 +108,25 @@ All notable changes to Domain AI are documented here. This project adheres to
   the dialog says how many messages that is before you confirm. Editing the opening
   question also frees the chat's title to follow the new wording.
 - Your own messages now have a copy control too, alongside edit.
+- **The wait now says which wait it is.** Three pulsing dots covered two different
+  things that can each take seconds on a CPU without dot-product kernels: fitting
+  the conversation to the context window before the model sees anything, and
+  reading the prompt before the first token. They now read "Preparing…" and
+  "Reading your message…", so a slow turn looks like work in progress rather than
+  a hang.
+- **Every on-device reply shows what it cost.** Tokens per second and how long the
+  prompt took to read, under the answer that produced them. The benchmark in
+  Settings measures one fixed prompt in ideal conditions; this is the number for
+  the question you actually asked, on a device as warm as it actually is — and it
+  is how you can watch prompt-cache reuse take a follow-up from seconds of reading
+  to almost none.
+- **Long-press a message.** Copy, select text, and edit or regenerate where they
+  apply. Selecting text is now an explicit choice rather than always-on, because a
+  bubble that is permanently a selection target cannot answer a long press at all.
+- **Jump to latest.** Scrolling up to re-read something stops the view following
+  new output, by design. A button now appears while the end of the conversation is
+  off screen, so getting back is one tap instead of a long flick that a streaming
+  reply keeps lengthening.
 
 ### Internal
 - `tools/check-contrast.py` checks every foreground/background pairing in both

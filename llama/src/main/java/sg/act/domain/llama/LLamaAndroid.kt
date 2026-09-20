@@ -115,7 +115,26 @@ class LLamaAndroid private constructor() {
      * diagnosable rather than theoretical.
      */
     suspend fun setReusePromptCache(enabled: Boolean) = withContext(runLoop) {
+        reusePromptCache = enabled
         set_reuse_prompt_cache(enabled)
+    }
+
+    // Mirrors the native flag so [runCompletion] knows whether it may leave the KV
+    // cache standing. Defaults to the native default (on).
+    @Volatile
+    private var reusePromptCache: Boolean = true
+
+    /**
+     * Drop whatever the KV cache holds, so the next prompt is decoded in full.
+     *
+     * The benchmark needs this. Its whole value is that two runs are comparable,
+     * and with the cache warm the second run of the same fixed prompt would skip
+     * the prefill it is there to measure and report a time that no real first
+     * question will ever see.
+     */
+    suspend fun clearPromptCache() = withContext(runLoop) {
+        (threadLocalState.get() as? State.Loaded)?.let { kv_cache_clear(it.context) }
+        Unit
     }
 
     /**
@@ -275,6 +294,12 @@ class LLamaAndroid private constructor() {
     /** Shared generation loop: prefill the prompt, then emit token deltas. */
     private suspend fun FlowCollector<String>.runCompletion(state: State.Loaded, prompt: String) {
         val nCtx = context_size(state.context)
+        // Clear last turn's numbers up front: a generation the user stops never
+        // reaches the end of this function, and stale figures reported as this
+        // reply's speed would be worse than none at all.
+        lastPrefillMs = 0
+        lastGenTokens = 0
+        lastGenTps = 0.0
         // completion_init decodes (and, if needed, truncates) the prompt and
         // returns the prompt's token count — the cursor's start position.
         val prefillStart = System.nanoTime()
@@ -292,12 +317,17 @@ class LLamaAndroid private constructor() {
                 state.context, state.batch, state.sampler, stop, ncur,
             ) ?: break
             tokens++
+            // Updated per token rather than once at the end, so a stopped reply
+            // still reports the speed it actually ran at.
+            val genNs = System.nanoTime() - genStart
+            lastGenTokens = tokens
+            lastGenTps = if (genNs > 0) tokens * 1_000_000_000.0 / genNs else 0.0
             emit(str)
         }
-        val genNs = System.nanoTime() - genStart
-        lastGenTokens = tokens
-        lastGenTps = if (genNs > 0 && tokens > 0) tokens * 1_000_000_000.0 / genNs else 0.0
-        kv_cache_clear(state.context)
+        // Leave the KV cache standing when reuse is on: it is precisely the work
+        // the next turn is meant to skip. Clearing it here is what made the prompt
+        // cache a no-op — every send re-decoded the whole conversation anyway.
+        if (!reusePromptCache) kv_cache_clear(state.context)
     }
 
     /** Free the native context and return to an unloaded state. */

@@ -18,6 +18,9 @@
     <string name="action_back">Back</string>
     <string name="action_regenerate">Regenerate reply</string>
     <string name="action_edit">Edit and resend</string>
+    <string name="action_select_text">Select text</string>
+    <string name="cd_message_menu">Message actions</string>
+    <string name="cd_jump_to_latest">Jump to the latest message</string>
     <string name="edit_message_title">Edit message</string>
     <string name="edit_message_send">Resend</string>
     <plurals name="edit_message_discards">
@@ -251,6 +254,14 @@
     <string name="reasoning_label">Reasoning</string>
     <string name="reasoning_thinking">Thinking…</string>
     <string name="cd_typing">Generating a reply</string>
+
+    <!-- What the app is doing while a reply is still on its way -->
+    <string name="chat_phase_preparing">Preparing…</string>
+    <string name="chat_phase_reading">Reading your message…</string>
+
+    <!-- How fast an on-device reply ran, shown under it -->
+    <string name="reply_stats">%1$s tok/s · %2$s s read</string>
+    <string name="cd_reply_stats">%1$s tokens per second, after reading the prompt for %2$s seconds</string>
 
     <!-- Active cloud provider / validation -->
     <string name="provider_validating">Validating connection…</string>

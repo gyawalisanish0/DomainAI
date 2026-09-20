@@ -81,6 +81,7 @@ class AppContainer(app: DomainApp) {
         localEngine = LocalEngine(backendProvider = modelManager::activeBackend),
         contextTokens = modelManager::effectiveContextTokens,
         localModelLoaded = { modelManager.activeBackend() != null },
+        lastGenerationStats = modelManager::lastGenerationStats,
     )
 
     val modelProfileStore = ModelProfileStore(app)
