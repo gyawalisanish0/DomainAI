@@ -70,6 +70,8 @@ class ModelManager(
     private val threadSettings: ThreadSettings,
     /** Crash-safe GPU offload guard (forces full offload with CPU fallback). */
     private val gpuGuard: GpuGuard,
+    /** User overrides for the engine's automatic decisions. Read at each load. */
+    private val engineSettings: EngineSettings,
     /** Device API level; gates which GPU plugins are worth attempting. */
     private val sdkInt: Int = 0,
     private val downloader: ModelDownloader = ModelDownloader(),
@@ -417,6 +419,33 @@ class ModelManager(
      */
     fun currentPlan(): AdaptivePlan = plan()
 
+    /** Whether a follow-up turn reuses the cached prompt prefix. */
+    fun reusePromptCache(): Boolean = engineSettings.reusePromptCache()
+
+    /** Toggle prompt-cache reuse. Takes effect immediately, no reload needed. */
+    fun setReusePromptCache(enabled: Boolean) {
+        engineSettings.setReusePromptCache(enabled)
+        scope.launch { llama.setReusePromptCache(enabled) }
+    }
+
+    /** Whether each worker is pinned to one specific core. */
+    fun strictAffinity(): Boolean = engineSettings.strictAffinity()
+
+    /** Set strict pinning and reload, since the threadpool is built at load. */
+    fun setStrictAffinity(enabled: Boolean) {
+        engineSettings.setStrictAffinity(enabled)
+        scope.launch { loadActiveModelIfPresent() }
+    }
+
+    /** Whether inference workers run above normal scheduling priority. */
+    fun highPriority(): Boolean = engineSettings.highPriority()
+
+    /** Set worker priority and reload, since the threadpool is built at load. */
+    fun setHighPriority(enabled: Boolean) {
+        engineSettings.setHighPriority(enabled)
+        scope.launch { loadActiveModelIfPresent() }
+    }
+
     /** ggml's registered backends, e.g. `"CPU [CPU]; Vulkan0 [GPU] Adreno 610"`. */
     fun backendInfo(): String = llama.backendInfo()
 
@@ -544,11 +573,17 @@ class ModelManager(
         } else {
             IntArray(0)
         }
+        // A user batch override beats the plan; 0 means follow it.
+        val batch = engineSettings.batchSize().takeIf { it > 0 } ?: p.batchSize
+        val strict = engineSettings.strictAffinity()
+        val highPriority = engineSettings.highPriority()
         sg.act.domain.core.CrashReporting.log(
-            "Adaptive plan: threads=$threads ctx=$contextTokens batch=${p.batchSize}" +
+            "Adaptive plan: threads=$threads ctx=$contextTokens batch=$batch" +
+                " strict=$strict prio=${if (highPriority) "high" else "normal"}" +
                 " constraints=${p.constraints.joinToString(",").ifEmpty { "none" }}",
         )
-        llama.load(path, contextTokens, gpuLayers, threads, affinity, p.batchSize)
+        llama.setReusePromptCache(engineSettings.reusePromptCache())
+        llama.load(path, contextTokens, gpuLayers, threads, affinity, batch, strict, highPriority)
         gpuGuard.endAttempt()
         loadedContextTokens = contextTokens
         backend = LlamaCppBackend(displayName, llama)

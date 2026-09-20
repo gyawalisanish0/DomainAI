@@ -55,6 +55,11 @@ data class SettingsUiState(
     val threadCount: Int = 0,
     val threadOptions: List<Int> = emptyList(),
     val effectiveThreads: Int = 0,
+    // Engine overrides (see EngineSettings): the automatic decisions, made visible
+    // and reversible.
+    val reusePromptCache: Boolean = true,
+    val strictAffinity: Boolean = false,
+    val highPriority: Boolean = false,
     // OpenRouter free-model picker
     val openRouterModels: List<OpenRouterClient.FreeModel> = emptyList(),
     val openRouterLoading: Boolean = false,
@@ -102,6 +107,9 @@ class SettingsViewModel(
             threadCount = modelManager.threadCount(),
             threadOptions = modelManager.threadOptions(),
             effectiveThreads = modelManager.effectiveThreads(),
+            reusePromptCache = modelManager.reusePromptCache(),
+            strictAffinity = modelManager.strictAffinity(),
+            highPriority = modelManager.highPriority(),
             catalog = ModelCatalog.models.map {
                 ModelOption(it, deviceCapabilities.rate(it.minRamMb))
             },
@@ -443,6 +451,24 @@ class SettingsViewModel(
             effectiveContextTokens = modelManager.effectiveContextTokens(),
             benchmark = null,
         )
+    }
+
+    fun setReusePromptCache(enabled: Boolean) {
+        modelManager.setReusePromptCache(enabled)
+        _ui.value = _ui.value.copy(reusePromptCache = enabled)
+    }
+
+    // Both of these rebuild the threadpool, which only happens at load — hence the
+    // reload inside ModelManager, and the cleared benchmark: the previous number
+    // no longer describes how the engine is running.
+    fun setStrictAffinity(enabled: Boolean) {
+        modelManager.setStrictAffinity(enabled)
+        _ui.value = _ui.value.copy(strictAffinity = enabled, benchmark = null)
+    }
+
+    fun setHighPriority(enabled: Boolean) {
+        modelManager.setHighPriority(enabled)
+        _ui.value = _ui.value.copy(highPriority = enabled, benchmark = null)
     }
 
     fun setThreadCount(count: Int) {

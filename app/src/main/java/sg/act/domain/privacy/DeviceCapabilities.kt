@@ -55,6 +55,7 @@ class DeviceCapabilities(context: Context) {
         availableRamMb = availableRamMb(),
         isLowRamDevice = isLowRam,
         cores = Runtime.getRuntime().availableProcessors(),
+        performanceCores = performanceCores,
         thermalStatus = thermalStatus(),
         powerSaveMode = powerSaveMode(),
     )
@@ -75,12 +76,23 @@ class DeviceCapabilities(context: Context) {
      * thread count naturally keeps generation on the primary/big cores. Pinning is
      * best-effort — Android's cpuset/EAS scheduler may override it.
      */
-    val coresBySpeed: IntArray by lazy { computeCoresBySpeed() }
+    val coresBySpeed: IntArray by lazy { topology.bySpeed }
+
+    /**
+     * How many cores run at the highest maximum clock, or 0 when `/sys` could not
+     * be read. Derived from the same pass as [coresBySpeed], so the topology is
+     * read once.
+     */
+    val performanceCores: Int by lazy { topology.performanceCores }
+
+    private data class Topology(val bySpeed: IntArray, val performanceCores: Int)
+
+    private val topology: Topology by lazy { computeTopology() }
 
     private fun memoryInfo(): ActivityManager.MemoryInfo =
         ActivityManager.MemoryInfo().also { activityManager.getMemoryInfo(it) }
 
-    private fun computeCoresBySpeed(): IntArray {
+    private fun computeTopology(): Topology {
         val total = Runtime.getRuntime().availableProcessors().coerceAtLeast(1)
         val freqs: List<Long?> = (0 until total).map { cpu ->
             runCatching {
@@ -88,8 +100,15 @@ class DeviceCapabilities(context: Context) {
                     .readText().trim().toLong()
             }.getOrNull()
         }
-        if (freqs.any { it == null }) return IntArray(0)
-        return (0 until total).sortedByDescending { freqs[it]!! }.toIntArray()
+        if (freqs.any { it == null }) return Topology(IntArray(0), 0)
+        val known = freqs.map { it!! }
+        val fastest = known.max()
+        return Topology(
+            bySpeed = (0 until total).sortedByDescending { known[it] }.toIntArray(),
+            // A phone with one cluster reports every core at the same clock, which
+            // correctly yields "all of them" — the plan's own ceiling then applies.
+            performanceCores = known.count { it == fastest },
+        )
     }
 
     /**

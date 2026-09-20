@@ -103,6 +103,22 @@ class LLamaAndroid private constructor() {
     fun lastGenTps(): Double = lastGenTps
 
     /**
+     * Turn prompt-cache reuse on or off.
+     *
+     * On, a follow-up turn keeps whatever of the previous prompt is still a prefix
+     * of the new one and decodes only the remainder — which on a chat is nearly
+     * everything, since each template output extends the last. Off, every turn
+     * re-decodes the whole conversation.
+     *
+     * Exposed as a setting because it trades a little memory for a lot of latency,
+     * and because being able to turn it off is what makes a suspected cache bug
+     * diagnosable rather than theoretical.
+     */
+    suspend fun setReusePromptCache(enabled: Boolean) = withContext(runLoop) {
+        set_reuse_prompt_cache(enabled)
+    }
+
+    /**
      * Tell the loader which backend libraries to try. Call before first use; the
      * provider is invoked once, on the run-loop thread, just before init.
      */
@@ -161,10 +177,11 @@ class LLamaAndroid private constructor() {
         addAssistant: Boolean,
     ): String
     private external fun free_model(model: Long)
-    private external fun new_context(model: Long, nCtx: Int, nThreads: Int, affinityCores: IntArray, nBatch: Int): Long
+    private external fun new_context(model: Long, nCtx: Int, nThreads: Int, affinityCores: IntArray, nBatch: Int, strictCpu: Boolean, highPriority: Boolean): Long
     private external fun context_size(context: Long): Int
     private external fun free_context(context: Long)
     private external fun backend_init(numa: Boolean, cpuSonames: Array<String>, gpuSonames: Array<String>)
+    private external fun set_reuse_prompt_cache(enabled: Boolean)
     private external fun backend_free()
     private external fun new_batch(nTokens: Int, embd: Int, nSeqMax: Int): Long
     private external fun free_batch(batch: Long)
@@ -198,6 +215,8 @@ class LLamaAndroid private constructor() {
         nThreads: Int = 0,
         affinityCores: IntArray = IntArray(0),
         nBatch: Int = 512,
+        strictCpu: Boolean = false,
+        highPriority: Boolean = false,
     ) {
         withContext(runLoop) {
             when (threadLocalState.get()) {
@@ -210,7 +229,7 @@ class LLamaAndroid private constructor() {
                         )
                     }
 
-                    val context = new_context(model, nCtx, nThreads, affinityCores, nBatch)
+                    val context = new_context(model, nCtx, nThreads, affinityCores, nBatch, strictCpu, highPriority)
                     if (context == 0L) throw IllegalStateException("new_context() failed")
 
                     val batch = new_batch(nBatch, 0, 1)

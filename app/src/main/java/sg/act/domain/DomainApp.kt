@@ -14,6 +14,7 @@ import sg.act.domain.inference.ModelProfile
 import sg.act.domain.inference.ProviderType
 import sg.act.domain.data.repository.ChatRepository
 import sg.act.domain.inference.ContextSettings
+import sg.act.domain.inference.EngineSettings
 import sg.act.domain.inference.GpuGuard
 import sg.act.domain.inference.LocalEngine
 import sg.act.domain.inference.ModelManager
@@ -64,6 +65,7 @@ class AppContainer(app: DomainApp) {
         contextSettings = ContextSettings(app),
         threadSettings = ThreadSettings(app),
         gpuGuard = GpuGuard(app),
+        engineSettings = EngineSettings(app),
         sdkInt = android.os.Build.VERSION.SDK_INT,
     )
 

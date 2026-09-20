@@ -171,6 +171,14 @@
     <string name="action_share_diagnostics">Share app logs</string>
 
     <!-- GPU offload + speed benchmark -->
+    <!-- Engine: the automatic decisions, made overridable -->
+    <string name="engine_heading">Engine</string>
+    <string name="setting_cache_title">Reuse prompt cache</string>
+    <string name="setting_cache_summary">Follow-ups skip re-reading the whole chat</string>
+    <string name="setting_strict_title">Strict core pinning</string>
+    <string name="setting_strict_summary">One worker per core; benchmark to compare</string>
+    <string name="setting_priority_title">High thread priority</string>
+    <string name="setting_priority_summary">Steadier speed, more UI stutter</string>
     <string name="setting_gpu_title">GPU acceleration</string>
     <string name="setting_gpu_summary">Falls back to CPU automatically</string>
     <string name="action_benchmark">Benchmark speed</string>

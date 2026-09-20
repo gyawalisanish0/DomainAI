@@ -147,6 +147,9 @@ fun ModelsScreen(
                 onSetContext = viewModel::setContextTokens,
                 onSetThreads = viewModel::setThreadCount,
                 onBenchmark = viewModel::runBenchmark,
+                onSetReuseCache = viewModel::setReusePromptCache,
+                onSetStrictAffinity = viewModel::setStrictAffinity,
+                onSetHighPriority = viewModel::setHighPriority,
             )
         }
     }
@@ -166,6 +169,9 @@ private fun ModelBody(
     onSetContext: (Int) -> Unit,
     onSetThreads: (Int) -> Unit,
     onBenchmark: () -> Unit,
+    onSetReuseCache: (Boolean) -> Unit,
+    onSetStrictAffinity: (Boolean) -> Unit,
+    onSetHighPriority: (Boolean) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(dimensionResource(R.dimen.space_s))) {
         Text(
@@ -287,6 +293,33 @@ private fun ModelBody(
 
         // Performance: GPU offload toggle + speed benchmark (data over vibes).
         HorizontalDivider(modifier = Modifier.padding(vertical = dimensionResource(R.dimen.space_xs)))
+        Text(
+            stringResource(R.string.engine_heading),
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.primary,
+        )
+        // The engine decides these for you by default. They are here because an
+        // automatic mechanism that cannot be switched off is one you cannot debug,
+        // and because a heuristic is wrong on some hardware — the benchmark below
+        // turns "which is faster on my phone" from an argument into a measurement.
+        SwitchRow(
+            title = stringResource(R.string.setting_cache_title),
+            summary = stringResource(R.string.setting_cache_summary),
+            checked = state.reusePromptCache,
+            onCheckedChange = onSetReuseCache,
+        )
+        SwitchRow(
+            title = stringResource(R.string.setting_strict_title),
+            summary = stringResource(R.string.setting_strict_summary),
+            checked = state.strictAffinity,
+            onCheckedChange = onSetStrictAffinity,
+        )
+        SwitchRow(
+            title = stringResource(R.string.setting_priority_title),
+            summary = stringResource(R.string.setting_priority_summary),
+            checked = state.highPriority,
+            onCheckedChange = onSetHighPriority,
+        )
         SwitchRow(
             title = stringResource(R.string.setting_gpu_title),
             summary = stringResource(R.string.setting_gpu_summary),

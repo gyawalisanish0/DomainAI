@@ -58,6 +58,38 @@ static constexpr int N_UBATCH = 512;
 // tokens). Single run-loop thread, so a plain static is safe.
 static std::string g_token_cache;
 
+// The prompt tokens currently resident in the KV cache, and the context they
+// belong to. Together these let a follow-up turn reuse the work already done.
+//
+// Every send used to clear the cache and re-decode the whole conversation. On a
+// CPU with no dot-product kernels that is the dominant cost of a multi-turn chat:
+// turn five re-reads turns one to four before emitting a single new token, every
+// time. Chat templates build each prompt by appending to the previous one, so the
+// overwhelming majority of those tokens are identical to what was just decoded.
+//
+// Keeping them means a follow-up only pays for what is genuinely new. The context
+// pointer is held too, because a model swap invalidates the cache entirely and the
+// tokens would otherwise look reusable.
+static std::vector<llama_token> g_cached_prompt;
+static llama_context *g_cached_ctx = nullptr;
+
+/** Forget the cached prompt. Call whenever the KV cache is cleared or a context dies. */
+static void forget_cached_prompt() {
+    g_cached_prompt.clear();
+    g_cached_ctx = nullptr;
+}
+
+/** How many leading tokens `a` and `b` share. */
+static size_t common_prefix_len(const std::vector<llama_token> &a, const std::vector<llama_token> &b) {
+    const size_t n = std::min(a.size(), b.size());
+    size_t i = 0;
+    while (i < n && a[i] == b[i]) i++;
+    return i;
+}
+
+/** Whether prompt-cache reuse is enabled (user-configurable; see setReuseCache). */
+static bool g_reuse_prompt_cache = true;
+
 // Last warning/error line llama.cpp emitted, so a failed load can report the real
 // reason (e.g. "unknown model architecture") instead of an opaque null.
 static std::string g_last_error;
@@ -280,7 +312,7 @@ Java_sg_act_domain_llama_LLamaAndroid_free_1model(JNIEnv *, jobject, jlong model
 }
 
 JNIEXPORT jlong JNICALL
-Java_sg_act_domain_llama_LLamaAndroid_new_1context(JNIEnv *env, jobject, jlong jmodel, jint n_ctx_requested, jint n_threads_requested, jintArray jaffinity, jint n_batch_requested) {
+Java_sg_act_domain_llama_LLamaAndroid_new_1context(JNIEnv *env, jobject, jlong jmodel, jint n_ctx_requested, jint n_threads_requested, jintArray jaffinity, jint n_batch_requested, jboolean strict_cpu, jboolean high_priority) {
     auto *model = reinterpret_cast<llama_model *>(jmodel);
     if (model == nullptr) return 0;
 
@@ -345,7 +377,12 @@ Java_sg_act_domain_llama_LLamaAndroid_new_1context(JNIEnv *env, jobject, jlong j
         // lives in ggml-base, which is still linked normally — so the defaults come
         // from upstream rather than being restated here and drifting.
         ggml_threadpool_params tpp = ggml_threadpool_params_default(threads);
-        tpp.strict_cpu = false; // share the mask across workers; scheduler balances within it
+        // strict: one worker per core, no migration within the mask. Loose lets
+        // the scheduler balance inside the fast-core set, which is more forgiving
+        // when cpuset or EAS overrides placement anyway. User-configurable because
+        // which wins is a property of the device, not of the code.
+        tpp.strict_cpu = (strict_cpu == JNI_TRUE);
+        tpp.prio = (high_priority == JNI_TRUE) ? GGML_SCHED_PRIO_HIGH : GGML_SCHED_PRIO_NORMAL;
         std::string mask_log;
         for (jsize i = 0; i < n_aff; i++) {
             const int cpu = cores[i];
@@ -358,7 +395,9 @@ Java_sg_act_domain_llama_LLamaAndroid_new_1context(JNIEnv *env, jobject, jlong j
         g_threadpool = g_threadpool_new(&tpp);
         if (g_threadpool != nullptr) {
             llama_attach_threadpool(ctx, g_threadpool, g_threadpool);
-            LOGi("Pinned %d worker threads to cores [%s] (best-effort)", threads, mask_log.c_str());
+            LOGi("Pinned %d worker threads to cores [%s] (strict=%d prio=%s, best-effort)",
+                 threads, mask_log.c_str(), tpp.strict_cpu ? 1 : 0,
+                 (high_priority == JNI_TRUE) ? "high" : "normal");
         } else {
             LOGe("threadpool creation failed; running without core pinning");
         }
@@ -383,6 +422,10 @@ Java_sg_act_domain_llama_LLamaAndroid_free_1context(JNIEnv *, jobject, jlong ctx
         g_threadpool_free(g_threadpool);
         g_threadpool = nullptr;
     }
+    // The cached prompt describes this context's KV cache. Once the context is
+    // gone a later one could be allocated at the same address, so a stale entry
+    // would look reusable and feed the model a prefix it never decoded.
+    forget_cached_prompt();
     llama_free(c);
 }
 
@@ -419,6 +462,15 @@ JNIEXPORT void JNICALL
 Java_sg_act_domain_llama_LLamaAndroid_kv_1cache_1clear(JNIEnv *, jobject, jlong ctx) {
     auto *context = reinterpret_cast<llama_context *>(ctx);
     llama_memory_clear(llama_get_memory(context), true);
+    forget_cached_prompt();
+}
+
+/** Enable or disable prompt-cache reuse. Disabling also drops what is held. */
+JNIEXPORT void JNICALL
+Java_sg_act_domain_llama_LLamaAndroid_set_1reuse_1prompt_1cache(JNIEnv *, jobject, jboolean enabled) {
+    g_reuse_prompt_cache = (enabled == JNI_TRUE);
+    if (!g_reuse_prompt_cache) forget_cached_prompt();
+    LOGi("Prompt cache reuse: %s", g_reuse_prompt_cache ? "on" : "off");
 }
 
 JNIEXPORT jint JNICALL
@@ -456,13 +508,43 @@ Java_sg_act_domain_llama_LLamaAndroid_completion_1init(
         LOGi("Prompt truncated by %d tokens to fit n_ctx=%d", drop, n_ctx);
     }
 
-    // Each send re-decodes a fresh prompt, so start from an empty KV cache.
-    llama_memory_clear(llama_get_memory(ctx), true);
+    // Reuse whatever of the previous prompt is still a prefix of this one, and
+    // decode only the remainder.
+    //
+    // `keep` must stay strictly below n_tokens: llama needs at least one token
+    // decoded to produce the logits the first sample reads. A prompt identical to
+    // the last one therefore re-decodes its final token, which is the cheapest
+    // correct thing to do.
+    llama_memory_t mem = llama_get_memory(ctx);
+    size_t keep = 0;
+    if (g_reuse_prompt_cache && g_cached_ctx == ctx && !g_cached_prompt.empty()) {
+        keep = common_prefix_len(g_cached_prompt, tokens);
+        if (keep >= static_cast<size_t>(n_tokens)) keep = static_cast<size_t>(n_tokens) - 1;
+    }
+
+    if (keep > 0) {
+        // Drop everything from the divergence point on, keeping [0, keep).
+        if (!llama_memory_seq_rm(mem, 0, static_cast<llama_pos>(keep), -1)) {
+            // A partial removal this backend cannot do. Falling back to a full
+            // clear is always correct, just slower.
+            LOGi("Partial KV removal refused; re-decoding the whole prompt");
+            llama_memory_clear(mem, true);
+            keep = 0;
+        }
+    } else {
+        llama_memory_clear(mem, true);
+    }
+
+    if (keep > 0) {
+        LOGi("Prompt cache: reusing %zu of %d tokens, decoding %zu",
+             keep, n_tokens, static_cast<size_t>(n_tokens) - keep);
+    }
 
     // Decode in batches using the size baked into the context (set from device RAM
     // on load). Reads it back via llama_n_batch so completion_init needs no extra param.
     const int n_batch = llama_n_batch(ctx);
-    for (int i = 0; i < n_tokens; i += n_batch) {
+    bool decode_failed = false;
+    for (int i = static_cast<int>(keep); i < n_tokens; i += n_batch) {
         const int chunk = std::min(n_batch, n_tokens - i);
         batch->n_tokens = 0;
         for (int j = 0; j < chunk; j++) {
@@ -472,8 +554,19 @@ Java_sg_act_domain_llama_LLamaAndroid_completion_1init(
         if (is_last) batch->logits[batch->n_tokens - 1] = 1;
         if (llama_decode(ctx, *batch) != 0) {
             LOGe("llama_decode failed during prompt batch at %d", i);
+            decode_failed = true;
             break;
         }
+    }
+
+    // Record what the cache now holds. On a failed decode the cache no longer
+    // matches any prompt we can describe, so claim nothing rather than risk
+    // reusing a prefix that was never fully decoded.
+    if (decode_failed) {
+        forget_cached_prompt();
+    } else {
+        g_cached_prompt = tokens;
+        g_cached_ctx = ctx;
     }
     return n_tokens;
 }

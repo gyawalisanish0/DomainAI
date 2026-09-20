@@ -16,6 +16,7 @@ class AdaptivePlanTest {
             cores: Int = 8,
             thermalStatus: Int = DeviceSnapshot.THERMAL_NONE,
             powerSaveMode: Boolean = false,
+            performanceCores: Int = 0,
         ) = DeviceSnapshot(
             totalRamMb = totalRamMb,
             availableRamMb = availableRamMb,
@@ -23,6 +24,7 @@ class AdaptivePlanTest {
             cores = cores,
             thermalStatus = thermalStatus,
             powerSaveMode = powerSaveMode,
+            performanceCores = performanceCores,
         )
     }
 
@@ -31,7 +33,9 @@ class AdaptivePlanTest {
     @Test
     fun `a healthy flagship gets the full hardware plan`() {
         val plan = Adaptive.plan(flagship())
-        assertEquals(4, plan.autoThreads)   // half of 8 cores
+        // performanceCores defaults to 0 here: an unreadable topology, which falls
+        // back to half the cores.
+        assertEquals(4, plan.autoThreads)
         assertEquals(6, plan.maxThreads)
         assertEquals(8192, plan.autoContextTokens)
         assertEquals(16384, plan.maxContextTokens)
@@ -66,6 +70,52 @@ class AdaptivePlanTest {
         assertEquals(1024, batchFor(8_000))
         assertEquals(2048, batchFor(16_000))
         assertEquals(4096, batchFor(64_000))
+    }
+
+    // --- Thread count follows the big cluster -----------------------------------
+
+    @Test
+    fun `Auto matches the big cluster, not half the cores`() {
+        // A 2+6 phone: half-the-cores asks for 4, putting two workers on little
+        // cores where — since the threadpool waits for the slowest at every
+        // barrier — they set the pace for all of them.
+        assertEquals(2, Adaptive.plan(flagship(cores = 8, performanceCores = 2)).autoThreads)
+    }
+
+    @Test
+    fun `a four-plus-four phone gets four`() {
+        assertEquals(4, Adaptive.plan(flagship(cores = 8, performanceCores = 4)).autoThreads)
+    }
+
+    @Test
+    fun `an unreadable topology falls back to half the cores`() {
+        assertEquals(4, Adaptive.plan(flagship(cores = 8, performanceCores = 0)).autoThreads)
+    }
+
+    @Test
+    fun `a single-cluster phone is capped by the thread ceiling`() {
+        // Every core at the same clock reports all of them as "performance", so
+        // the plan's own ceiling is what bounds it.
+        val plan = Adaptive.plan(flagship(cores = 8, performanceCores = 8))
+        assertEquals(Adaptive.MAX_THREADS, plan.autoThreads)
+    }
+
+    @Test
+    fun `exactly one top-clock core means a prime layout, not a one-core cluster`() {
+        // 1 + 3 + 4 designs (a prime core above a performance cluster above
+        // efficiency cores) report a single core at the highest clock. Taking that
+        // literally would run one thread and waste the three cores just below it,
+        // so this is treated as "topology not usable as a cluster size" and falls
+        // back to half the cores — which on such a layout is the right answer.
+        assertEquals(4, Adaptive.plan(flagship(cores = 8, performanceCores = 1)).autoThreads)
+    }
+
+    @Test
+    fun `throttling halves the big-cluster count too`() {
+        val plan = Adaptive.plan(
+            flagship(cores = 8, performanceCores = 4, thermalStatus = DeviceSnapshot.THERMAL_SEVERE),
+        )
+        assertEquals(2, plan.autoThreads)
     }
 
     // --- Thermal and battery saver bias Auto only -------------------------------
@@ -184,16 +234,28 @@ class AdaptivePlanTest {
         val frees = listOf(100L, 599L, 600L, 1_199L, 1_200L, 2_399L, 2_400L, 30_000L)
         for (total in rams) for (free in frees) for (low in listOf(false, true)) {
             for (cores in 1..12) for (thermal in -1..6) for (saver in listOf(false, true)) {
+                for (big in listOf(0, 1, 2, cores)) {
                 val plan = Adaptive.plan(
-                    DeviceSnapshot(total, free, low, cores, thermal, saver),
+                    // Named, because inserting a field into DeviceSnapshot once
+                    // silently re-bound these positionally.
+                    DeviceSnapshot(
+                        totalRamMb = total,
+                        availableRamMb = free,
+                        isLowRamDevice = low,
+                        cores = cores,
+                        thermalStatus = thermal,
+                        powerSaveMode = saver,
+                        performanceCores = big,
+                    ),
                 )
                 val where = "total=$total free=$free low=$low cores=$cores " +
-                    "thermal=$thermal saver=$saver"
+                    "thermal=$thermal saver=$saver big=$big"
                 assertTrue("$where: auto ctx over max", plan.autoContextTokens <= plan.maxContextTokens)
                 assertTrue("$where: auto threads over max", plan.autoThreads <= plan.maxThreads)
                 assertTrue("$where: threads under floor", plan.autoThreads >= Adaptive.MIN_THREADS)
                 assertTrue("$where: batch under floor", plan.batchSize >= Adaptive.MIN_BATCH)
                 assertTrue("$where: context must be positive", plan.autoContextTokens > 0)
+                }
             }
         }
     }

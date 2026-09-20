@@ -15,6 +15,19 @@ All notable changes to Domain AI are documented here. This project adheres to
   device-adaptive logical batch, so a high-RAM phone reserved a compute buffer sized
   for 4096 tokens in exchange for prefill gains that had long since flattened. It is
   now capped independently.
+- **Follow-up turns stop re-reading the whole conversation.** Every send used to
+  clear the KV cache and re-decode the entire prompt, so turn five re-processed
+  turns one to four before writing a single new token — on a CPU with no
+  dot-product kernels, the dominant cost of a multi-turn chat. Chat templates build
+  each prompt by appending to the last, so almost all of that work was identical to
+  what had just been done. A turn now keeps whatever of the previous prompt is
+  still a prefix of the new one and decodes only the remainder.
+- **Auto thread count follows the big core cluster, not half the cores.** ggml's
+  threadpool synchronises at every barrier, so a batch finishes when its slowest
+  worker does; spilling onto little cores adds a straggler rather than throughput.
+  Half-the-cores happened to be right on a 4+4 phone and wrong on a 2+6 one. A
+  single top-clock core is read as a prime-core design (1+3+4) and falls back,
+  since running one thread there would idle the three performance cores below it.
 - **The dot-product kernels are back, without dropping a single device.** ggml's
   accelerated integer kernels are compile-time gated, so one binary has to either
   name a high CPU baseline and exclude older phones or name none and leave the
@@ -57,6 +70,14 @@ All notable changes to Domain AI are documented here. This project adheres to
   working, which a single binary cannot do.
 
 ### Added
+- **Engine settings.** The inference path decides a lot for you — which CPU build,
+  how many threads, what batch size. That stays the default, but three of those
+  decisions are now yours to override in Settings → On-device model: prompt-cache
+  reuse, strict core pinning (one worker per core versus sharing the fast-core
+  mask), and high thread priority (steadier tokens, more UI stutter). Two reasons
+  they are settings rather than heuristics: an automatic mechanism that cannot be
+  switched off is one you cannot debug, and the in-app benchmark turns "which is
+  faster on my phone" from an argument into a measurement.
 - **Inference settings now adapt continuously, not once at startup.** Auto thread
   count, context length and prompt batch size are re-decided at every model load from
   the phone's live state — free memory rather than just total RAM, plus thermal

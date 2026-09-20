@@ -16,6 +16,16 @@ data class DeviceSnapshot(
     val isLowRamDevice: Boolean,
     /** Online CPU count. */
     val cores: Int,
+    /**
+     * How many cores share the highest maximum clock — the "big" cluster — or 0
+     * when the topology could not be read.
+     *
+     * This matters more than the total on a phone. ggml's threadpool synchronises
+     * every worker at each barrier, so a batch finishes when its *slowest* thread
+     * does. Spilling onto little cores therefore does not add throughput; it adds
+     * a straggler that everyone else waits for.
+     */
+    val performanceCores: Int = 0,
     /** `PowerManager.getCurrentThermalStatus()`, or [THERMAL_UNKNOWN] below API 29. */
     val thermalStatus: Int = THERMAL_UNKNOWN,
     /** Battery saver is on. */
@@ -134,10 +144,23 @@ object Adaptive {
         // --- Threads -----------------------------------------------------------
         val cores = snapshot.cores.coerceAtLeast(1)
         val maxThreads = minOf(MAX_THREADS, cores).coerceAtLeast(MIN_THREADS)
-        // Auto is a middle ground: about half the cores, so generation gets a solid
-        // share of the CPU while the rest stays free for the UI and system. An
-        // 8-core phone lands on 4.
-        val baseThreads = (cores / 2).coerceIn(MIN_THREADS, maxThreads)
+        // Prefer the size of the big cluster, and fall back to half the cores when
+        // the topology is unreadable — or when it reports exactly one top-clock
+        // core, which means a prime-core design (1 + 3 + 4) rather than a cluster
+        // of one. Taking that literally would run a single thread and leave the
+        // three performance cores just below it idle.
+        //
+        // Half-the-cores was the old rule and it is wrong on the layout most phones
+        // actually have. On a 4+4 device it happens to land on 4, which is right;
+        // on a 2+6 it asks for 4 and two of those workers land on little cores,
+        // where — because the threadpool waits for the slowest at every barrier —
+        // they set the pace for all of them. Matching the big cluster keeps every
+        // worker on comparable hardware.
+        val baseThreads = if (snapshot.performanceCores >= MIN_THREADS) {
+            snapshot.performanceCores.coerceIn(MIN_THREADS, maxThreads)
+        } else {
+            (cores / 2).coerceIn(MIN_THREADS, maxThreads)
+        }
         val throttled = snapshot.thermalStatus >= DeviceSnapshot.THERMAL_SEVERE
         if (throttled) constraints += Constraint.THERMAL
         if (snapshot.powerSaveMode) constraints += Constraint.POWER_SAVE
